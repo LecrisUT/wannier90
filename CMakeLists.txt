@@ -86,14 +86,16 @@ endif ()
 ## Main targets
 add_executable(Wannier90_exe)
 set_target_properties(Wannier90_exe PROPERTIES
-		OUTPUT_NAME wannier90.x
+		OUTPUT_NAME wannier90
 		EXPORT_NAME exe
+		SUFFIX .x
 )
 add_executable(Wannier90::exe ALIAS Wannier90_exe)
 add_executable(Wannier90_post)
 set_target_properties(Wannier90_post PROPERTIES
-		OUTPUT_NAME postw90.x
+		OUTPUT_NAME postw90
 		EXPORT_NAME post
+		SUFFIX .x
 )
 add_executable(Wannier90::post ALIAS Wannier90_post)
 add_library(Wannier90_lib)
