@@ -19,6 +19,11 @@ target_sources(Wannier90_lib PRIVATE
 		)
 target_link_libraries(Wannier90_post PRIVATE
 		Wannier90_lib BLAS::BLAS LAPACK::LAPACK)
+if (WANNIER90_MPI)
+	target_compile_definitions(Wannier90_post PRIVATE
+			MPI08 MPI
+	)
+endif ()
 
 ## Installs
 if (WANNIER90_INSTALL)

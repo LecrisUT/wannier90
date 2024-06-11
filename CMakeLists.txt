@@ -76,7 +76,10 @@ set(Wannier90_MPI ${WANNIER90_WITH_MPI})
 find_package(BLAS REQUIRED)
 find_package(LAPACK REQUIRED)
 if (WANNIER90_MPI)
-	find_package(MPI REQUIRED)
+	find_package(MPI REQUIRED COMPONENTS Fortran)
+	if (NOT MPI_Fortran_HAVE_F08_MODULE)
+		message(SEND_ERROR "mpi_f08 module is required for building Wannier90 with MPI")
+	endif ()
 endif ()
 
 #[=============================================================================[
