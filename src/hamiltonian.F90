@@ -32,7 +32,6 @@ module w90_hamiltonian
   public :: hamiltonian_get_hr
   public :: hamiltonian_setup
   public :: hamiltonian_write_hr
-  public :: hamiltonian_write_rmn
   public :: hamiltonian_write_tb
 
 contains
@@ -62,7 +61,7 @@ contains
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(in) :: mp_grid(3)
     integer, intent(inout), allocatable :: irvec(:, :)
@@ -164,7 +163,7 @@ contains
     ! arguments
     type(ham_logical_type), intent(inout) :: ham_logical
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(inout), allocatable :: ndegen(:)
     integer, intent(inout), allocatable :: irvec(:, :)
@@ -218,10 +217,6 @@ contains
     ham_logical%use_translation = .false.
     ham_logical%have_ham_r = .false.
     ham_logical%have_ham_k = .false.
-    ham_logical%hr_written = .false.
-    ham_logical%tb_written = .false.
-
-    return
     !================================================!
   end subroutine hamiltonian_dealloc
 
@@ -252,7 +247,7 @@ contains
     type(print_output_type), intent(in)      :: print_output
     type(dis_manifold_type), intent(in)      :: dis_manifold
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in)           :: comm
+    type(w90_comm_type), intent(in)           :: comm
     type(timer_list_type), intent(inout)     :: timer
 
     integer, intent(inout), allocatable :: shift_vec(:, :)
@@ -280,10 +275,10 @@ contains
     ! local variables
     integer          :: loop_kpt, i, j, m, irpt, ierr, counter
     real(kind=dp)    :: rdotk
-    real(kind=dp)    :: eigval_opt(num_bands, num_kpts)
-    real(kind=dp)    :: eigval2(num_wann, num_kpts)
+    real(kind=dp), allocatable    :: eigval_opt(:, :) !(num_bands, num_kpts)
+    real(kind=dp), allocatable    :: eigval2(:, :)    !(num_wann, num_kpts)
     real(kind=dp)    :: irvec_tmp(3)
-    complex(kind=dp) :: utmp(num_bands, num_wann)
+    complex(kind=dp), allocatable :: utmp(:, :)       !(num_bands, num_wann)
     complex(kind=dp) :: fac
 
     if (print_output%timing_level > 1) call io_stopwatch_start('hamiltonian: get_hr', timer)
@@ -299,10 +294,32 @@ contains
     if (ham_logical%have_ham_k) go to 100
 
     ham_k = cmplx_0
-    eigval_opt = 0.0_dp
+
+    allocate (eigval2(num_wann, num_kpts), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating eigval2 in hamiltonian_get_hr', comm)
+      return
+    endif
+
     eigval2 = 0.0_dp
 
     if (have_disentangled) then
+
+      ! start allocation of eigval_opt, utmp; used only if have_disentangled.
+      allocate (eigval_opt(num_bands, num_kpts), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating eigval_opt in hamiltonian_get_hr', comm)
+        return
+      endif
+
+      allocate (utmp(num_bands, num_wann), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating utmp in hamiltonian_get_hr', comm)
+        return
+      endif
+
+      eigval_opt = 0.0_dp
+      ! end allocation of eigval_opt, utmp
 
       ! slim down eigval to contain states within the outer window
 
@@ -452,6 +469,30 @@ contains
       endif
     end if
 
+    if (allocated(eigval2)) then
+      deallocate (eigval2, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating eigval2 in hamiltonian_get_hr', comm)
+        return
+      endif
+    end if
+
+    if (allocated(eigval_opt)) then
+      deallocate (eigval_opt, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating eigval_opt in hamiltonian_get_hr', comm)
+        return
+      endif
+    end if
+
+    if (allocated(utmp)) then
+      deallocate (utmp, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating utmp in hamiltonian_get_hr', comm)
+        return
+      endif
+    end if
+
     if (print_output%timing_level > 1) call io_stopwatch_stop('hamiltonian: get_hr', timer)
 
     return
@@ -574,46 +615,48 @@ contains
   end subroutine hamiltonian_get_hr
 
   !================================================!
-  subroutine hamiltonian_write_hr(ham_logical, ham_r, irvec, ndegen, nrpts, num_wann, &
-                                  timing_level, seedname, timer, error, comm)
+  subroutine hamiltonian_write_hr(ham_r, irvec, ndegen, nrpts, num_wann, timing_level, seedname, &
+                                  timer, error, comm)
     !================================================!
     !
     !!  Write the Hamiltonian in the WF basis
     !
     !================================================!
 
-    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_file_unit, io_date
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_date
     use w90_types, only: timer_list_type
-    use w90_wannier90_types, only: ham_logical_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
-    type(ham_logical_type), intent(inout) :: ham_logical
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
-    integer, intent(inout) :: nrpts
-    integer, intent(in)    :: ndegen(:)
-    integer, intent(inout) :: irvec(:, :)
-    integer, intent(in)    :: num_wann
-    integer, intent(in)    :: timing_level
+    integer, intent(in) :: irvec(:, :)
+    integer, intent(in) :: ndegen(:)
+    integer, intent(in) :: nrpts
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: timing_level
+
     complex(kind=dp), intent(in) :: ham_r(:, :, :)
-    character(len=50), intent(in)  :: seedname
+
+    character(len=50), intent(in) :: seedname
 
     ! local variables
-    integer            :: i, j, irpt, file_unit
+    integer :: i, j, irpt, file_unit, ierr
     character(len=33) :: header
-    character(len=9)  :: cdate, ctime
-
-    if (ham_logical%hr_written) return
+    character(len=9) :: cdate, ctime
 
     if (timing_level > 1) call io_stopwatch_start('hamiltonian: write_hr', timer)
 
     ! write the  whole matrix with all the indices
 
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_hr.dat', form='formatted', &
-          status='unknown', err=101)
+    open (newunit=file_unit, file=trim(seedname)//'_hr.dat', form='formatted', status='unknown', &
+          iostat=ierr)
+    if (ierr /= 0) then
+      call set_error_file(error, 'Error: hamiltonian_write_hr: problem opening file '//trim(seedname)//'_hr.dat', comm)
+      return
+    endif
 
     call io_date(cdate, ctime)
     header = 'written on '//cdate//' at '//ctime
@@ -632,16 +675,7 @@ contains
     end do
 
     close (file_unit)
-
-    ham_logical%hr_written = .true.
-
     if (timing_level > 1) call io_stopwatch_stop('hamiltonian: write_hr', timer)
-
-    return
-
-101 call set_error_file(error, 'Error: hamiltonian_write_hr: problem opening file '//trim(seedname)//'_hr.dat', comm)
-    return !fixme jj restructure
-
   end subroutine hamiltonian_write_hr
 
   !================================================!
@@ -671,7 +705,7 @@ contains
     type(print_output_type), intent(in) :: print_output
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(inout)              :: nrpts
     integer, intent(inout), allocatable :: ndegen(:)
@@ -812,94 +846,9 @@ contains
   end subroutine hamiltonian_wigner_seitz
 
   !================================================!
-  subroutine hamiltonian_write_rmn(kmesh_info, m_matrix, kpt_latt, irvec, nrpts, num_kpts, &
-                                   num_wann, seedname, error, comm)
-    !================================================!
-    !
-    !! Write out the matrix elements of r
-    !
-    !================================================!
-
-    use w90_constants, only: twopi, cmplx_i
-    use w90_io, only: io_file_unit, io_date
-    use w90_types, only: kmesh_info_type
-
-    implicit none
-
-    ! arguments
-    type(kmesh_info_type), intent(in) :: kmesh_info
-    type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
-
-    integer, intent(inout) :: nrpts
-    integer, intent(inout) :: irvec(:, :)
-    integer, intent(in)    :: num_wann
-    integer, intent(in)    :: num_kpts
-    real(kind=dp), intent(in)      :: kpt_latt(:, :)
-    complex(kind=dp), intent(in)   :: m_matrix(:, :, :, :)
-    character(len=50), intent(in)  :: seedname
-
-    ! local variables
-    integer :: loop_rpt, m, n, nkp, ind, nn, file_unit
-    real(kind=dp) :: rdotk
-    complex(kind=dp) :: fac
-    complex(kind=dp) :: position(3)
-    character(len=33) :: header
-    character(len=9)  :: cdate, ctime
-
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_r.dat', form='formatted', status='unknown', err=101)
-    call io_date(cdate, ctime)
-
-    header = 'written on '//cdate//' at '//ctime
-    write (file_unit, *) header ! Date and time
-    write (file_unit, *) num_wann
-    write (file_unit, *) nrpts
-
-    do loop_rpt = 1, nrpts
-      do m = 1, num_wann
-        do n = 1, num_wann
-          position(:) = 0._dp
-          do nkp = 1, num_kpts
-            rdotk = twopi*dot_product(kpt_latt(:, nkp), real(irvec(:, loop_rpt), dp))
-            fac = exp(-cmplx_i*rdotk)/real(num_kpts, dp)
-            do ind = 1, 3
-              do nn = 1, kmesh_info%nntot
-                if (m .eq. n) then
-                  ! For loop_rpt==rpt_origin, this reduces to
-                  ! Eq.(32) of Marzari and Vanderbilt PRB 56,
-                  ! 12847 (1997). Otherwise, is is Eq.(44)
-                  ! Wang, Yates, Souza and Vanderbilt PRB 74,
-                  ! 195118 (2006), modified according to
-                  ! Eqs.(27,29) of Marzari and Vanderbilt
-                  position(ind) = position(ind) - kmesh_info%wb(nn)*kmesh_info%bk(ind, nn, nkp) &
-                                  *aimag(log(m_matrix(n, m, nn, nkp)))*fac
-                else
-                  ! Eq.(44) Wang, Yates, Souza and Vanderbilt PRB 74, 195118 (2006)
-                  position(ind) = position(ind) + cmplx_i*kmesh_info%wb(nn) &
-                                  *kmesh_info%bk(ind, nn, nkp)*m_matrix(n, m, nn, nkp)*fac
-                endif
-              end do
-            end do
-          end do
-          write (file_unit, '(5I5,6F12.6)') irvec(:, loop_rpt), n, m, position(:)
-        end do
-      end do
-    end do
-
-    close (file_unit)
-
-    return
-
-101 call set_error_file(error, 'Error: hamiltonian_write_rmn: problem opening file '//trim(seedname)//'_r', comm)
-    return !fixme jj restructure
-
-  end subroutine hamiltonian_write_rmn
-
-  !================================================!
-  subroutine hamiltonian_write_tb(ham_logical, kmesh_info, ham_r, m_matrix, kpt_latt, &
-                                  real_lattice, irvec, ndegen, nrpts, num_kpts, num_wann, &
-                                  timing_level, seedname, timer, error, comm)
+  subroutine hamiltonian_write_tb(kmesh_info, ham_r, m_matrix, kpt_latt, real_lattice, irvec, &
+                                  ndegen, nrpts, num_kpts, num_wann, timing_level, seedname, &
+                                  timer, dist_k, error, comm)
     !================================================!
     !! Write in a single file all the information
     !! that is needed to set up a Wannier-based
@@ -909,25 +858,23 @@ contains
     !! * <0n|r|Rn>
     !================================================!
 
-    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_file_unit, io_date
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_date
     use w90_constants, only: twopi, cmplx_i
     use w90_types, only: kmesh_info_type
-    use w90_wannier90_types, only: ham_logical_type
 
     ! arguments
     type(kmesh_info_type), intent(in) :: kmesh_info
-    type(ham_logical_type), intent(inout) :: ham_logical
     type(timer_list_type), intent(inout) :: timer
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
 
-    integer                :: i, j, irpt, ik, nn, idir, file_unit
-    integer, intent(in)    :: num_wann
-    integer, intent(in)    :: num_kpts
-    integer, intent(in)    :: timing_level
-    integer, intent(inout) :: nrpts
-    integer, intent(in)    :: ndegen(:)
-    integer, intent(inout) :: irvec(:, :)
+    integer, intent(in) :: dist_k(:)
+    integer, intent(in) :: ndegen(:)
+    integer, intent(in) :: num_kpts
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: irvec(:, :)
+    integer, intent(in) :: nrpts
+    integer, intent(in) :: timing_level
 
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     real(kind=dp), intent(in) :: real_lattice(3, 3)
@@ -938,53 +885,67 @@ contains
     character(len=50), intent(in)  :: seedname
 
     ! local variables
-    real(kind=dp)      :: rdotk
-    complex(kind=dp)   :: fac, pos_r(3)
-    character(len=33)  :: header
-    character(len=9)   :: cdate, ctime
+    integer :: ierr
+    integer :: i, j, irpt, ik, nn, idir, file_unit
+    integer :: rank, ik_rank
+    real(kind=dp) :: rdotk
+    complex(kind=dp) :: fac, pos_r(3)
+    character(len=33) :: header
+    character(len=9) :: cdate, ctime
+    logical :: on_root = .false.
 
-    if (ham_logical%tb_written) return
+    rank = mpirank(comm)
 
-    if (timing_level > 1) call io_stopwatch_start('hamiltonian: write_tb', timer)
+    if (rank == 0) on_root = .true.
 
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_tb.dat', form='formatted', &
-          status='unknown', err=101)
+    if (on_root) then
+      if (timing_level > 1) call io_stopwatch_start('hamiltonian: write_tb', timer)
 
-    call io_date(cdate, ctime)
-    header = 'written on '//cdate//' at '//ctime
+      open (newunit=file_unit, file=trim(seedname)//'_tb.dat', form='formatted', status='unknown', &
+            iostat=ierr)
+      if (ierr /= 0) then
+        call set_error_file(error, 'Error: hamiltonian_write_tb: problem opening file '//trim(seedname)//'_tb.dat', comm)
+        return
+      endif
 
-    write (file_unit, *) header ! Date and time
-    !
-    ! lattice vectors
-    !
-    write (file_unit, *) real_lattice(1, :) !a_1
-    write (file_unit, *) real_lattice(2, :) !a_2
-    write (file_unit, *) real_lattice(3, :) !a_3
-    !
-    write (file_unit, *) num_wann
-    write (file_unit, *) nrpts
-    write (file_unit, '(15I5)') (ndegen(i), i=1, nrpts)
-    !
-    ! <0n|H|Rm>
-    !
-    do irpt = 1, nrpts
-      write (file_unit, '(/,3I5)') irvec(:, irpt)
-      do i = 1, num_wann
-        do j = 1, num_wann
-          write (file_unit, '(2I5,3x,2(E15.8,1x))') j, i, ham_r(j, i, irpt)
+      call io_date(cdate, ctime)
+      header = 'written on '//cdate//' at '//ctime
+
+      write (file_unit, *) header ! Date and time
+      !
+      ! lattice vectors
+      !
+      write (file_unit, *) real_lattice(1, :) !a_1
+      write (file_unit, *) real_lattice(2, :) !a_2
+      write (file_unit, *) real_lattice(3, :) !a_3
+      !
+      write (file_unit, *) num_wann
+      write (file_unit, *) nrpts
+      write (file_unit, '(15I5)') (ndegen(i), i=1, nrpts)
+      !
+      ! <0n|H|Rm>
+      !
+      do irpt = 1, nrpts
+        write (file_unit, '(/,3I5)') irvec(:, irpt)
+        do i = 1, num_wann
+          do j = 1, num_wann
+            write (file_unit, '(2I5,3x,2(E15.8,1x))') j, i, ham_r(j, i, irpt)
+          end do
         end do
       end do
-    end do
+    endif ! on_root
     !
     ! <0n|r|Rm>
     !
     do irpt = 1, nrpts
-      write (file_unit, '(/,3I5)') irvec(:, irpt)
+      if (on_root) write (file_unit, '(/,3I5)') irvec(:, irpt)
       do i = 1, num_wann
         do j = 1, num_wann
           pos_r(:) = 0._dp
+          ik_rank = 1
           do ik = 1, num_kpts
+            if (dist_k(ik) /= rank) cycle
+
             rdotk = twopi*dot_product(kpt_latt(:, ik), real(irvec(:, irpt), dp))
             fac = exp(-cmplx_i*rdotk)/real(num_kpts, dp)
             do idir = 1, 3
@@ -997,31 +958,25 @@ contains
                   ! 195118 (2006), modified according to
                   ! Eqs.(27,29) of Marzari and Vanderbilt
                   pos_r(idir) = pos_r(idir) - kmesh_info%wb(nn)*kmesh_info%bk(idir, nn, ik) &
-                                *aimag(log(m_matrix(i, i, nn, ik)))*fac
+                                *aimag(log(m_matrix(i, i, nn, ik_rank)))*fac
                 else
                   ! Eq.(44) Wang, Yates, Souza and Vanderbilt PRB 74, 195118 (2006)
                   pos_r(idir) = pos_r(idir) + cmplx_i*kmesh_info%wb(nn) &
-                                *kmesh_info%bk(idir, nn, ik)*m_matrix(j, i, nn, ik)*fac
+                                *kmesh_info%bk(idir, nn, ik)*m_matrix(j, i, nn, ik_rank)*fac
                 endif
               end do
             end do
+            ik_rank = ik_rank + 1
           end do
-          write (file_unit, '(2I5,3x,6(E15.8,1x))') j, i, pos_r(:)
+          call comms_reduce(pos_r(1), 3, 'SUM', error, comm)
+          if (on_root) write (file_unit, '(2I5,3x,6(E15.8,1x))') j, i, pos_r(:)
         end do
       end do
     end do
-    close (file_unit)
 
-    ham_logical%tb_written = .true.
-
-    if (timing_level > 1) call io_stopwatch_stop('hamiltonian: write_tb', timer)
-
-    return
-
-101 call set_error_file(error, 'Error: hamiltonian_write_tb: problem opening file ' &
-                        //trim(seedname)//'_tb.dat', comm)
-    return !jj fixme restructure
-
+    if (on_root) then
+      close (file_unit)
+      if (timing_level > 1) call io_stopwatch_stop('hamiltonian: write_tb', timer)
+    endif
   end subroutine hamiltonian_write_tb
-
 end module w90_hamiltonian

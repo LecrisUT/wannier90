@@ -1,4 +1,4 @@
-!-*- mode: F90 -*-!
+!
 !------------------------------------------------------------!
 ! This file is distributed as part of the Wannier90 code and !
 ! under the terms of the GNU General Public License. See the !
@@ -16,11 +16,11 @@
 !                                                            !
 !------------------------------------------------------------!
 
-module w90_plot
+module w90_plot_mod
 
   !! This module handles various plots
 
-  use w90_comms, only: comms_array_split, comms_reduce, w90comm_type, mpisize, mpirank
+  use w90_comms, only: comms_reduce, w90_comm_type, mpisize, mpirank, comms_array_split
 
   implicit none
 
@@ -38,8 +38,8 @@ contains
                        w90_calculation, ham_k, ham_r, m_matrix, u_matrix, u_matrix_opt, eigval, &
                        real_lattice, wannier_centres_translated, bohr, irvec, mp_grid, ndegen, &
                        shift_vec, nrpts, num_bands, num_kpts, num_wann, rpt_origin, &
-                       transport_mode, have_disentangled, lsitesymmetry, spinors, seedname, &
-                       stdout, timer, error, comm)
+                       transport_mode, have_disentangled, lsitesymmetry, w90_system, seedname, &
+                       stdout, timer, dist_k, error, comm)
     !================================================!
     !
     !! Main plotting routine
@@ -48,10 +48,11 @@ contains
 
     use w90_constants, only: eps6, dp
     use w90_hamiltonian, only: hamiltonian_get_hr, hamiltonian_write_hr, hamiltonian_setup, &
-      hamiltonian_write_rmn, hamiltonian_write_tb
+      hamiltonian_write_tb
     use w90_io, only: io_stopwatch_start, io_stopwatch_stop
     use w90_types, only: kmesh_info_type, wannier_data_type, atom_data_type, dis_manifold_type, &
-      kpoint_path_type, print_output_type, ws_region_type, ws_distance_type, timer_list_type
+      kpoint_path_type, print_output_type, ws_region_type, ws_distance_type, timer_list_type, &
+      w90_system_type
     use w90_utility, only: utility_recip_lattice_base
     use w90_wannier90_types, only: w90_calculation_type, wvfn_read_type, output_file_type, &
       fermi_surface_plot_type, band_plot_type, wannier_plot_type, real_space_ham_type, &
@@ -62,184 +63,256 @@ contains
     implicit none
 
     ! arguments
-    type(atom_data_type), intent(in)          :: atom_data
-    type(band_plot_type), intent(in)          :: band_plot
-    type(dis_manifold_type), intent(in)       :: dis_manifold
-    type(fermi_surface_plot_type), intent(in) :: fermi_surface_plot
-    type(ham_logical_type), intent(inout)     :: ham_logical
-    type(kmesh_info_type), intent(in)         :: kmesh_info
-    type(kpoint_path_type), intent(in)        :: kpoint_path
-    type(output_file_type), intent(in)        :: output_file
-    type(print_output_type), intent(in)       :: print_output
-    type(real_space_ham_type), intent(inout)  :: real_space_ham
-    type(w90_calculation_type), intent(in)    :: w90_calculation
-    type(w90comm_type), intent(in)            :: comm
-    type(wannier_data_type), intent(in)       :: wannier_data
-    type(wannier_plot_type), intent(in)       :: wannier_plot
-    type(ws_region_type), intent(in)          :: ws_region
-    type(wvfn_read_type), intent(in)          :: wvfn_read
-    type(timer_list_type), intent(inout) :: timer
+    type(real_space_ham_type), intent(inout) :: real_space_ham
     type(w90_error_type), allocatable, intent(out) :: error
+    type(timer_list_type), intent(inout) :: timer
+    type(ham_logical_type), intent(inout) :: ham_logical
 
-    complex(kind=dp), intent(in)                 :: m_matrix(:, :, :, :)
-    complex(kind=dp), intent(in)                 :: u_matrix_opt(:, :, :)
-    complex(kind=dp), intent(in)                 :: u_matrix(:, :, :)
     complex(kind=dp), intent(inout), allocatable :: ham_r(:, :, :)
     complex(kind=dp), intent(inout), allocatable :: ham_k(:, :, :)
 
-    real(kind=dp), intent(in), allocatable    :: fermi_energy_list(:)
-    real(kind=dp), intent(in)                 :: bohr
-    real(kind=dp), intent(in)                 :: eigval(:, :)
-    real(kind=dp), intent(in)                 :: kpt_latt(:, :)
     real(kind=dp), intent(inout), allocatable :: wannier_centres_translated(:, :)
-    real(kind=dp), intent(in)                 :: real_lattice(3, 3)
 
-    integer, intent(in)                 :: mp_grid(3)
-    integer, intent(in)                 :: num_bands
-    integer, intent(in)                 :: num_kpts
-    integer, intent(in)                 :: num_wann
     integer, intent(inout), allocatable :: irvec(:, :)
     integer, intent(inout), allocatable :: ndegen(:)
     integer, intent(inout), allocatable :: shift_vec(:, :)
     integer, intent(inout)              :: nrpts
     integer, intent(inout)              :: rpt_origin
-    integer, intent(in)                 :: stdout
+
+    type(atom_data_type), intent(in) :: atom_data
+    type(band_plot_type), intent(in) :: band_plot
+    type(dis_manifold_type), intent(in) :: dis_manifold
+    type(fermi_surface_plot_type), intent(in) :: fermi_surface_plot
+    type(kmesh_info_type), intent(in) :: kmesh_info
+    type(kpoint_path_type), intent(in) :: kpoint_path
+    type(output_file_type), intent(in) :: output_file
+    type(print_output_type), intent(in) :: print_output
+    type(w90_calculation_type), intent(in) :: w90_calculation
+    type(w90_comm_type), intent(in) :: comm
+    type(w90_system_type), intent(in) :: w90_system
+    type(wannier_data_type), intent(in) :: wannier_data
+    type(wannier_plot_type), intent(in) :: wannier_plot
+    type(ws_region_type), intent(in) :: ws_region
+    type(wvfn_read_type), intent(in) :: wvfn_read
+
+    complex(kind=dp), intent(in) :: m_matrix(:, :, :, :)
+    complex(kind=dp), intent(in) :: u_matrix_opt(:, :, :)
+    complex(kind=dp), intent(in) :: u_matrix(:, :, :)
+
+    real(kind=dp), intent(in), allocatable :: fermi_energy_list(:)
+    real(kind=dp), intent(in) :: bohr
+    real(kind=dp), intent(in) :: eigval(:, :)
+    real(kind=dp), intent(in) :: kpt_latt(:, :)
+    real(kind=dp), intent(in) :: real_lattice(3, 3)
+
+    integer, intent(in) :: mp_grid(3)
+    integer, intent(in) :: num_bands
+    integer, intent(in) :: num_kpts
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: stdout
+    integer, intent(in) :: dist_k(:)
 
     character(len=20), intent(in) :: transport_mode
     character(len=50), intent(in) :: seedname
 
     logical, intent(in) :: have_disentangled
     logical, intent(in) :: lsitesymmetry
-    logical, intent(in) :: spinors
 
     ! local variables
     type(ws_distance_type) :: ws_distance
     real(kind=dp) :: recip_lattice(3, 3), volume
-    integer :: nkp, bands_num_spec_points, my_node_id, num_nodes
+    integer :: nkp, bands_num_spec_points, my_node_id, i
     logical :: have_gamma
     logical :: on_root = .false.
 
-    num_nodes = mpisize(comm)
     my_node_id = mpirank(comm)
 
     if (my_node_id == 0) on_root = .true.
 
-    if (on_root) then
-      if (print_output%timing_level > 0) call io_stopwatch_start('plot: main', timer)
+    call utility_recip_lattice_base(real_lattice, recip_lattice, volume)
 
-      call utility_recip_lattice_base(real_lattice, recip_lattice, volume)
-      ! Print the header only if there is something to plot
-      if (w90_calculation%bands_plot .or. w90_calculation%fermi_surface_plot .or. &
-          output_file%write_hr .or. w90_calculation%wannier_plot .or. output_file%write_u_matrices &
-          .or. output_file%write_tb) then
-        write (stdout, '(1x,a)') '*---------------------------------------------------------------------------*'
-        write (stdout, '(1x,a)') '|                               PLOTTING                                    |'
-        write (stdout, '(1x,a)') '*---------------------------------------------------------------------------*'
-        write (stdout, *)
-      end if
+    ! setup RS cluster for calculations that need it
+    if (output_file%write_hr .or. &
+        output_file%write_hr_diag .or. &
+        output_file%write_r2mn .or. &
+        output_file%write_rmn .or. &
+        output_file%write_tb .or. &
+        w90_calculation%bands_plot .or. &
+        w90_calculation%fermi_surface_plot) then
 
-      if (w90_calculation%bands_plot .or. w90_calculation%fermi_surface_plot .or. &
-          output_file%write_hr .or. output_file%write_tb) then
-        ! Check if the kmesh includes the gamma point
-        have_gamma = .false.
-        do nkp = 1, num_kpts
-          if (all(abs(kpt_latt(:, nkp)) < eps6)) have_gamma = .true.
-        end do
-        if (.not. have_gamma) &
-             write (stdout, '(1x,a)') '!!!! Kpoint grid does not include Gamma. '// &
-             & ' Interpolation may be incorrect. !!!!'
-        ! Transform Hamiltonian to WF basis
+      call hamiltonian_setup(ham_logical, print_output, ws_region, w90_calculation, ham_k, ham_r, &
+                             real_lattice, wannier_centres_translated, irvec, mp_grid, ndegen, &
+                             num_kpts, num_wann, nrpts, rpt_origin, band_plot%mode, stdout, &
+                             timer, error, transport_mode, comm)
+      if (allocated(error)) return
+    endif
 
-        call hamiltonian_setup(ham_logical, print_output, ws_region, w90_calculation, ham_k, ham_r, &
-                               real_lattice, wannier_centres_translated, irvec, mp_grid, ndegen, &
-                               num_kpts, num_wann, nrpts, rpt_origin, band_plot%mode, stdout, &
-                               timer, error, transport_mode, comm)
-        if (allocated(error)) return
+    ! setup RS Hamilton eqn for calculations that need it
+    if (output_file%write_hr .or. &
+        output_file%write_hr_diag .or. &
+        output_file%write_tb .or. &
+        w90_calculation%bands_plot .or. &
+        w90_calculation%fermi_surface_plot) then
 
-        call hamiltonian_get_hr(atom_data, dis_manifold, ham_logical, real_space_ham, print_output, &
-                                ham_k, ham_r, u_matrix, u_matrix_opt, eigval, kpt_latt, &
-                                real_lattice, wannier_data%centres, wannier_centres_translated, &
-                                irvec, shift_vec, nrpts, num_bands, num_kpts, num_wann, &
-                                have_disentangled, stdout, timer, error, lsitesymmetry, comm)
-        if (allocated(error)) return
+      ! Check if the kmesh includes the gamma point
+      have_gamma = .false.
+      do nkp = 1, num_kpts
+        if (all(abs(kpt_latt(:, nkp)) < eps6)) have_gamma = .true.
+      end do
+      if (.not. have_gamma) then
+        write (stdout, '(1x,a)') '!!!! Kpoint grid does not include Gamma. '// &
+          ' Interpolation may be incorrect. !!!!'
+      endif
 
-        bands_num_spec_points = 0
+      ! Transform Hamiltonian to WF basis
+      call hamiltonian_get_hr(atom_data, dis_manifold, ham_logical, real_space_ham, print_output, &
+                              ham_k, ham_r, u_matrix, u_matrix_opt, eigval, kpt_latt, &
+                              real_lattice, wannier_data%centres, wannier_centres_translated, &
+                              irvec, shift_vec, nrpts, num_bands, num_kpts, num_wann, &
+                              have_disentangled, stdout, timer, error, lsitesymmetry, comm)
 
-        if (allocated(kpoint_path%labels)) bands_num_spec_points = size(kpoint_path%labels)
-
-        if (w90_calculation%bands_plot) then
-          call plot_interpolate_bands(mp_grid, real_lattice, band_plot, kpoint_path, &
-                                      real_space_ham, ws_region, print_output, recip_lattice, &
-                                      num_wann, wannier_data, ham_r, irvec, ndegen, nrpts, &
-                                      wannier_centres_translated, ws_distance, &
-                                      bands_num_spec_points, stdout, seedname, timer, error, &
-                                      comm)
-          if (allocated(error)) return
-        endif
-
-        if (w90_calculation%fermi_surface_plot) then
-          call plot_fermi_surface(fermi_energy_list, recip_lattice, fermi_surface_plot, num_wann, &
-                                  ham_r, irvec, ndegen, nrpts, print_output%timing_level, stdout, &
-                                  seedname, timer, error, comm)
-          if (allocated(error)) return
-        endif
-
-        if (output_file%write_hr) then
-          call hamiltonian_write_hr(ham_logical, ham_r, irvec, ndegen, nrpts, num_wann, &
-                                    print_output%timing_level, seedname, timer, error, comm)
-          if (allocated(error)) return
-        endif
-
-        if (output_file%write_rmn) then
-          call hamiltonian_write_rmn(kmesh_info, m_matrix, kpt_latt, irvec, nrpts, num_kpts, &
-                                     num_wann, seedname, error, comm)
-          if (allocated(error)) return
-        endif
-
-        if (output_file%write_tb) then
-          call hamiltonian_write_tb(ham_logical, kmesh_info, ham_r, m_matrix, kpt_latt, &
-                                    real_lattice, irvec, ndegen, nrpts, num_kpts, num_wann, &
-                                    print_output%timing_level, seedname, timer, error, comm)
-          if (allocated(error)) return
-        endif
-
-        if (output_file%write_hr .or. output_file%write_rmn .or. output_file%write_tb) then
-          if (.not. ws_distance%done) then
-            call ws_translate_dist(ws_distance, ws_region, num_wann, &
-                                   wannier_data%centres, real_lattice, mp_grid, nrpts, irvec, &
-                                   error, comm, force_recompute=.false.)
-            if (allocated(error)) return
-          endif
-
-          call ws_write_vec(ws_distance, nrpts, irvec, num_wann, ws_region%use_ws_distance, &
-                            seedname, error, comm)
-          if (allocated(error)) return
-        end if
-      end if
-    end if !on_root
-
-    if (w90_calculation%wannier_plot) then
-      call plot_wannier(wannier_plot, wvfn_read, wannier_data, print_output, u_matrix_opt, &
-                        dis_manifold, real_lattice, atom_data, kpt_latt, u_matrix, num_kpts, &
-                        num_bands, num_wann, have_disentangled, spinors, bohr, stdout, seedname, &
-                        timer, error, comm)
       if (allocated(error)) return
     endif
 
     if (on_root) then
+      if (print_output%timing_level > 0) call io_stopwatch_start('plot: main', timer)
+
+      if (print_output%iprint > 0) then
+        ! Print the header only if there is something to plot
+        if (output_file%write_hr .or. &
+            output_file%write_r2mn .or. &
+            output_file%write_rmn .or. &
+            output_file%write_tb .or. &
+            output_file%write_u_matrices .or. &
+            w90_calculation%bands_plot .or. &
+            w90_calculation%fermi_surface_plot .or. &
+            w90_calculation%wannier_plot) then
+          write (stdout, '(1x,a)') '*---------------------------------------------------------------------------*'
+          write (stdout, '(1x,a)') '|                               PLOTTING                                    |'
+          write (stdout, '(1x,a)') '*---------------------------------------------------------------------------*'
+          write (stdout, *)
+        endif
+      endif
+
+      if (w90_calculation%fermi_surface_plot) then
+        ! plot_fermi_surface can be trivially parallelised--fixme
+        call plot_fermi_surface(fermi_energy_list, recip_lattice, fermi_surface_plot, num_wann, &
+                                ham_r, irvec, ndegen, nrpts, print_output%timing_level, stdout, &
+                                seedname, timer, error, comm)
+        if (allocated(error)) return
+      endif
+
+      if (output_file%write_hr .or. output_file%write_tb) then
+        call ws_translate_dist(ws_distance, ws_region, num_wann, &
+                               wannier_data%centres, real_lattice, mp_grid, nrpts, irvec, &
+                               error, comm, force_recompute=.false.)
+        if (allocated(error)) return
+
+        call ws_write_vec(ws_distance, nrpts, irvec, num_wann, ws_region%use_ws_distance, &
+                          seedname, error, comm)
+        if (allocated(error)) return
+      end if
+
+      ! calculate and write projection of WFs on original bands in outer window
+      ! only meaningful in disentanglement case (and otherwise lwindow is not available)
+      if (output_file%write_proj .and. num_bands > num_wann) then
+        call plot_calc_projection(num_bands, num_wann, num_kpts, u_matrix_opt, eigval, &
+                                  dis_manifold%lwindow, print_output%timing_level, &
+                                  print_output%iprint, stdout, timer)
+        if (allocated(error)) return
+      endif
+
       if (output_file%write_bvec) then
         call plot_bvec(kmesh_info, num_kpts, seedname, error, comm)
         if (allocated(error)) return
       endif
 
-      if (output_file%write_u_matrices) then
-        call plot_u_matrices(u_matrix_opt, u_matrix, kpt_latt, have_disentangled, num_wann, &
-                             num_kpts, num_bands, seedname)
+      if (output_file%write_hr) then
+        ! this is a trivial matrix write; no need to parallelize
+        call hamiltonian_write_hr(ham_r, irvec, ndegen, nrpts, num_wann, &
+                                  print_output%timing_level, seedname, timer, error, comm)
+        if (allocated(error)) return
       endif
 
-      if (print_output%timing_level > 0) call io_stopwatch_stop('plot: main', timer)
-    end if
+      if (output_file%write_hr_diag) then
+        if (print_output%iprint > 0) then
+          write (stdout, *)
+          write (stdout, '(1x,a)') 'On-site Hamiltonian matrix elements'
+          write (stdout, '(3x,a)') '  n        <0n|H|0n> (eV)'
+          write (stdout, '(3x,a)') '-------------------------'
+          do i = 1, num_wann
+            write (stdout, '(3x,i3,5x,f12.6)') i, real(ham_r(i, i, rpt_origin), kind=dp)
+          enddo
+          write (stdout, *)
+        endif
+      endif
 
+      if (output_file%write_u_matrices) then
+        call plot_u_matrices(u_matrix_opt, u_matrix, kpt_latt, dis_manifold, have_disentangled, &
+                             num_wann, num_kpts, num_bands, seedname)
+      endif
+
+      if (output_file%write_vdw_data) then
+        ! aam: write data required for vdW utility
+        call plot_write_vdw_data(num_wann, wannier_data, real_lattice, u_matrix, u_matrix_opt, &
+                                 have_disentangled, w90_system, error, comm, stdout, seedname)
+        if (allocated(error)) return
+      endif
+
+      if (output_file%write_xyz) then
+        call plot_write_xyz(real_space_ham%translate_home_cell, num_wann, wannier_data%centres, &
+                            real_lattice, atom_data, print_output, error, comm, stdout, seedname)
+        if (allocated(error)) return
+      endif
+    end if !on_root
+
+    if (w90_calculation%bands_plot) then
+      bands_num_spec_points = 0
+      if (allocated(kpoint_path%labels)) bands_num_spec_points = size(kpoint_path%labels)
+
+      call plot_interpolate_bands(mp_grid, real_lattice, band_plot, kpoint_path, real_space_ham, &
+                                  ws_region, print_output, recip_lattice, num_wann, wannier_data, &
+                                  ham_r, irvec, ndegen, nrpts, wannier_centres_translated, &
+                                  ws_distance, bands_num_spec_points, stdout, seedname, timer, &
+                                  error, comm)
+      if (allocated(error)) return
+    endif
+
+    if (output_file%svd_omega) then
+      call plot_svd_omega_i(num_wann, num_kpts, kmesh_info, m_matrix, print_output, timer, dist_k, &
+                            error, comm, stdout)
+      if (allocated(error)) return
+    endif
+
+    if (output_file%write_rmn) then
+      ! parallel write_rmn
+      call plot_write_rmn(kmesh_info, m_matrix, kpt_latt, irvec, nrpts, num_kpts, num_wann, &
+                          seedname, dist_k, error, comm)
+      if (allocated(error)) return
+    endif
+
+    if (output_file%write_r2mn) then
+      ! write matrix elements <m|r^2|n> to file
+      call plot_write_r2mn(num_kpts, num_wann, kmesh_info, m_matrix, seedname, dist_k, error, comm)
+      if (allocated(error)) return
+    endif
+
+    if (output_file%write_tb) then
+      call hamiltonian_write_tb(kmesh_info, ham_r, m_matrix, kpt_latt, real_lattice, irvec, &
+                                ndegen, nrpts, num_kpts, num_wann, print_output%timing_level, &
+                                seedname, timer, dist_k, error, comm)
+      if (allocated(error)) return
+    endif
+
+    if (w90_calculation%wannier_plot) then
+      call plot_wannier(wannier_plot, wvfn_read, wannier_data, print_output, u_matrix_opt, &
+                        dis_manifold, real_lattice, atom_data, kpt_latt, u_matrix, num_kpts, &
+                        num_bands, num_wann, have_disentangled, w90_system%spinors, bohr, stdout, &
+                        seedname, timer, dist_k, error, comm)
+      if (allocated(error)) return
+    endif
+
+    if (on_root .and. print_output%timing_level > 0) call io_stopwatch_stop('plot: main', timer)
   end subroutine plot_main
 
   !-----------------------------------------------------------------
@@ -259,7 +332,7 @@ contains
     !================================================!
 
     use w90_constants, only: dp, cmplx_0, twopi
-    use w90_io, only: io_file_unit, io_time, io_stopwatch_start, io_stopwatch_stop
+    use w90_io, only: io_time, io_stopwatch_start, io_stopwatch_stop
     use w90_ws_distance, only: ws_translate_dist
     use w90_utility, only: utility_metric
     use w90_types, only: wannier_data_type, kpoint_path_type, print_output_type, ws_region_type, &
@@ -280,7 +353,7 @@ contains
     type(ws_region_type), intent(in) :: ws_region
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(inout) :: nrpts
     integer, intent(in) :: ndegen(:)
@@ -307,11 +380,12 @@ contains
     integer              :: loop_spts, total_pts, loop_i, nkp, ideg
     integer              :: num_paths, num_spts, ierr
     integer              :: bndunit, gnuunit, loop_w, loop_p
-    integer              :: kpath_pts(bands_num_spec_points/2)
+    integer, allocatable :: kpath_pts(:)
     integer, allocatable :: idx_special_points(:)
+    integer, allocatable :: label_idx_special_points(:)
 
-    real(kind=dp)              :: kpath_len(bands_num_spec_points/2)
     real(kind=dp)              :: rdotk, vec(3), emin, emax, time0
+    real(kind=dp), allocatable :: kpath_len(:)
     real(kind=dp), allocatable :: rwork(:)
     real(kind=dp), allocatable :: xval(:)
     real(kind=dp), allocatable :: eig_int(:, :), plot_kpoint(:, :)
@@ -326,22 +400,39 @@ contains
     complex(kind=dp), allocatable :: U_int(:, :)
     complex(kind=dp), allocatable :: cwork(:)
 
-    logical :: kpath_print_first_point(bands_num_spec_points/2)
+    logical, allocatable :: kpath_print_first_point(:)
 
     character(len=20), allocatable :: glabel(:)
-    character(len=10), allocatable :: xlabel(:)
-    character(len=10), allocatable :: ctemp(:)
+    character(len=20), allocatable :: xlabel(:)
+    character(len=20), allocatable :: ctemp(:)
 
+    ! mpi variables
+    integer ::  my_node_id, num_nodes
+    logical ::  on_root
+    integer, allocatable :: counts(:)
+    integer, allocatable :: displs(:)
+
+    num_nodes = mpisize(comm)
+    my_node_id = mpirank(comm)
+
+    on_root = .false.
+    if (my_node_id == 0) on_root = .true.
+
+    allocate (counts(0:num_nodes - 1))
+    allocate (displs(0:num_nodes - 1))
     !
-    if (print_output%timing_level > 1) then
-      call io_stopwatch_start('plot: interpolate_bands', timer)
-    endif
-    !
-    time0 = io_time()
+    if (on_root) then
+      if (print_output%timing_level > 1) then
+        call io_stopwatch_start('plot: interpolate_bands', timer)
+      endif
+      !
+      time0 = io_time()
+
+      write (stdout, *)
+      write (stdout, '(1x,a)') 'Calculating interpolated band-structure'
+      write (stdout, *)
+    endif ! on_root
     call utility_metric(recip_lattice, recip_metric)
-    write (stdout, *)
-    write (stdout, '(1x,a)') 'Calculating interpolated band-structure'
-    write (stdout, *)
     !
     allocate (ham_pack((num_wann*(num_wann + 1))/2), stat=ierr)
     if (ierr /= 0) then
@@ -379,62 +470,93 @@ contains
       return
     endif
 
-    allocate (idx_special_points(bands_num_spec_points), stat=ierr)
-    if (ierr /= 0) then
-      call set_error_alloc(error, 'Error in allocating idx_special_points in plot_interpolate_bands', comm)
-      return
-    endif
-    allocate (xval_special_points(bands_num_spec_points), stat=ierr)
-    if (ierr /= 0) then
-      call set_error_alloc(error, 'Error in allocating xval_special_points in plot_interpolate_bands', comm)
-      return
-    endif
-    idx_special_points = -1
-    xval_special_points = -1._dp
+    if (.not. kpoint_path%bands_kpt_explicit) then
+      allocate (kpath_len(bands_num_spec_points/2), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating kpath_len in plot_interpolate_bands', comm)
+        return
+      endif
+      allocate (kpath_pts(bands_num_spec_points/2), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating kpath_pts in plot_interpolate_bands', comm)
+        return
+      endif
+      allocate (kpath_print_first_point(bands_num_spec_points/2), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating kpath_print_first_point in plot_interpolate_bands', comm)
+        return
+      endif
+      allocate (idx_special_points(bands_num_spec_points), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating idx_special_points in plot_interpolate_bands', comm)
+        return
+      endif
+      allocate (xval_special_points(bands_num_spec_points), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating xval_special_points in plot_interpolate_bands', comm)
+        return
+      endif
+      idx_special_points = -1
+      xval_special_points = -1._dp
+    end if
     !
     ! Work out how many points in the total path and the positions of the special points
     !
-    num_paths = bands_num_spec_points/2
+    if (kpoint_path%bands_kpt_explicit) then
+      total_pts = size(kpoint_path%bands_kpt_frac, 2)
+      ! Count the total number of special points
+      num_spts = 0
+      do i = 1, total_pts
+        do j = 1, bands_num_spec_points
+          if (sum((kpoint_path%bands_kpt_frac(:, i) - kpoint_path%points(:, j))**2) <= 1.e-6) then
+            num_spts = num_spts + 1
+            exit
+          end if
+        end do
+      end do
+    else
+      num_paths = bands_num_spec_points/2
 
-    kpath_print_first_point = .false.
+      kpath_print_first_point = .false.
 
-    ! Loop over paths, set to False print_first_point if the starting point
-    ! is the same as the ending point of the previous path.
-    ! I skip the first path for which I always want to print the first point.
-    kpath_print_first_point(1) = .true.
-    do i = 2, num_paths
-      ! If either the coordinates are different or the label is different, compute again the point
-      ! (it will end up at the same x coordinate)
-      if ((SUM((kpoint_path%points(:, (i - 1)*2) - &
-                kpoint_path%points(:, (i - 1)*2 + 1))**2) > 1.e-6) .or. &
-          (TRIM(kpoint_path%labels((i - 1)*2)) .ne. &
-           TRIM(kpoint_path%labels((i - 1)*2 + 1)))) then
-        kpath_print_first_point(i) = .true.
-      end if
-    enddo
+      ! Loop over paths, set to False print_first_point if the starting point
+      ! is the same as the ending point of the previous path.
+      ! I skip the first path for which I always want to print the first point.
+      kpath_print_first_point(1) = .true.
+      do i = 2, num_paths
+        ! If either the coordinates are different or the label is different, compute again the point
+        ! (it will end up at the same x coordinate)
+        if ((SUM((kpoint_path%points(:, (i - 1)*2) - &
+                  kpoint_path%points(:, (i - 1)*2 + 1))**2) > 1.e-6) .or. &
+            (TRIM(kpoint_path%labels((i - 1)*2)) .ne. &
+             TRIM(kpoint_path%labels((i - 1)*2 + 1)))) then
+          kpath_print_first_point(i) = .true.
+        end if
+      enddo
 
-    ! Count the total number of special points
-    num_spts = num_paths
-    do i = 1, num_paths
-      if (kpath_print_first_point(i)) num_spts = num_spts + 1
-    end do
+      ! Count the total number of special points
+      num_spts = num_paths
+      do i = 1, num_paths
+        if (kpath_print_first_point(i)) num_spts = num_spts + 1
+      end do
 
-    do loop_spts = 1, num_paths
-      vec = kpoint_path%points(:, 2*loop_spts) - kpoint_path%points(:, 2*loop_spts - 1)
-      kpath_len(loop_spts) = sqrt(dot_product(vec, (matmul(recip_metric, vec))))
-      if (loop_spts == 1) then
-        kpath_pts(loop_spts) = kpoint_path%num_points_first_segment
-      else
-        kpath_pts(loop_spts) = nint(real(kpoint_path%num_points_first_segment, dp) &
-                                    *kpath_len(loop_spts)/kpath_len(1))
-        ! At least 1 point
-        !if (kpath_pts(loop_spts) .eq. 0) kpath_pts(loop_spts) = 1
-      end if
-    end do
-    total_pts = sum(kpath_pts)
-    do i = 1, num_paths
-      if (kpath_print_first_point(i)) total_pts = total_pts + 1
-    end do
+      do loop_spts = 1, num_paths
+        vec = kpoint_path%points(:, 2*loop_spts) - kpoint_path%points(:, 2*loop_spts - 1)
+        kpath_len(loop_spts) = sqrt(dot_product(vec, (matmul(recip_metric, vec))))
+        if (loop_spts == 1) then
+          kpath_pts(loop_spts) = kpoint_path%num_points_first_segment
+        else
+          kpath_pts(loop_spts) = nint(real(kpoint_path%num_points_first_segment, dp) &
+                                      *kpath_len(loop_spts)/kpath_len(1))
+          ! At least 1 point
+          !if (kpath_pts(loop_spts) .eq. 0) kpath_pts(loop_spts) = 1
+        end if
+      end do
+      total_pts = sum(kpath_pts)
+      do i = 1, num_paths
+        if (kpath_print_first_point(i)) total_pts = total_pts + 1
+      end do
+    end if
 
     allocate (plot_kpoint(3, total_pts), stat=ierr)
     if (ierr /= 0) then
@@ -458,7 +580,7 @@ contains
     endif
     allocate (glabel(num_spts), stat=ierr)
     if (ierr /= 0) then
-      call set_error_alloc(error, 'Error in allocating num_spts in plot_interpolate_bands', comm)
+      call set_error_alloc(error, 'Error in allocating glabel in plot_interpolate_bands', comm)
       return
     endif
     allocate (xlabel(num_spts), stat=ierr)
@@ -475,76 +597,132 @@ contains
     !
     ! Find the position of each kpoint in the path
     !
-    counter = 0
-    do loop_spts = 1, num_paths
-      if (kpath_print_first_point(loop_spts)) then
-        counter = counter + 1
-        if (counter == 1) then
-          xval(counter) = 0.0_dp
-        else
-          ! If we are printing the first point in a path,
-          ! It means that the coordinate did not change (otherwise
-          ! we would not be printing it). Therefore I do not move
-          ! on the x axis, there was a jump in the path here.
-          xval(counter) = xval(counter - 1)
-        endif
-        plot_kpoint(:, counter) = kpoint_path%points(:, 2*loop_spts - 1)
-
-        idx_special_points(2*loop_spts - 1) = counter
-        xval_special_points(2*loop_spts - 1) = xval(counter)
-      end if
-
-      ! This is looping on all points but the first (1 is the first point
-      ! after the first in the path)
-      do loop_i = 1, kpath_pts(loop_spts)
-        counter = counter + 1
-        ! Set xval, the x position on the path of the current path
-        if (counter == 1) then
-          ! This case should never happen but I keep it in for "safety"
-          xval(counter) = 0.0_dp
-        else
-          xval(counter) = xval(counter - 1) + kpath_len(loop_spts)/real(kpath_pts(loop_spts), dp)
-        endif
-        plot_kpoint(:, counter) = kpoint_path%points(:, 2*loop_spts - 1) + &
-                                  (kpoint_path%points(:, 2*loop_spts) &
-                                   - kpoint_path%points(:, 2*loop_spts - 1))* &
-                                  (real(loop_i, dp)/real(kpath_pts(loop_spts), dp))
+    if (kpoint_path%bands_kpt_explicit) then
+      allocate (idx_special_points(num_spts), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating idx_special_points in plot_interpolate_bands', comm)
+        return
+      endif
+      allocate (xval_special_points(num_spts), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating xval_special_points in plot_interpolate_bands', comm)
+        return
+      endif
+      idx_special_points = -1
+      xval_special_points = -1._dp
+      allocate (label_idx_special_points(num_spts), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating label_idx_special_points in plot_interpolate_bands', comm)
+        return
+      endif
+      plot_kpoint(:, :) = kpoint_path%bands_kpt_frac(:, :)
+      xval = 0.0_dp
+      counter = 0
+      do i = 1, total_pts
+        if (i > 1) then
+          vec = plot_kpoint(:, i) - plot_kpoint(:, i - 1)
+          xval(i) = xval(i - 1) + sqrt(dot_product(vec, (matmul(recip_metric, vec))))
+        end if
+        do j = 1, bands_num_spec_points
+          if (sum((kpoint_path%bands_kpt_frac(:, i) - kpoint_path%points(:, j))**2) <= 1.e-6) then
+            counter = counter + 1
+            idx_special_points(counter) = i
+            label_idx_special_points(counter) = j
+            xval_special_points(counter) = xval(i)
+            if (counter > 1) then
+              if (idx_special_points(counter) == idx_special_points(counter - 1) + 1) then
+                ! If the two points are consecutive, it means that the x coordinate should be the same
+                xval(i) = xval(i - 1)
+                xval_special_points(counter) = xval(i)
+              end if
+            end if
+            exit
+          end if
+        end do
       end do
-      idx_special_points(2*loop_spts) = counter
-      xval_special_points(2*loop_spts) = xval(counter)
-    end do
-    !xval(total_pts)=sum(kpath_len)
-    plot_kpoint(:, total_pts) = kpoint_path%points(:, bands_num_spec_points)
+
+    else
+      counter = 0
+      do loop_spts = 1, num_paths
+        if (kpath_print_first_point(loop_spts)) then
+          counter = counter + 1
+          if (counter == 1) then
+            xval(counter) = 0.0_dp
+          else
+            ! If we are printing the first point in a path,
+            ! It means that the coordinate did not change (otherwise
+            ! we would not be printing it). Therefore I do not move
+            ! on the x axis, there was a jump in the path here.
+            xval(counter) = xval(counter - 1)
+          endif
+          plot_kpoint(:, counter) = kpoint_path%points(:, 2*loop_spts - 1)
+
+          idx_special_points(2*loop_spts - 1) = counter
+          xval_special_points(2*loop_spts - 1) = xval(counter)
+        end if
+
+        ! This is looping on all points but the first (1 is the first point
+        ! after the first in the path)
+        do loop_i = 1, kpath_pts(loop_spts)
+          counter = counter + 1
+          ! Set xval, the x position on the path of the current path
+          if (counter == 1) then
+            ! This case should never happen but I keep it in for "safety"
+            xval(counter) = 0.0_dp
+          else
+            xval(counter) = xval(counter - 1) + kpath_len(loop_spts)/real(kpath_pts(loop_spts), dp)
+          endif
+          plot_kpoint(:, counter) = kpoint_path%points(:, 2*loop_spts - 1) + &
+                                    (kpoint_path%points(:, 2*loop_spts) &
+                                     - kpoint_path%points(:, 2*loop_spts - 1))* &
+                                    (real(loop_i, dp)/real(kpath_pts(loop_spts), dp))
+        end do
+        idx_special_points(2*loop_spts) = counter
+        xval_special_points(2*loop_spts) = xval(counter)
+      end do
+      !xval(total_pts)=sum(kpath_len)
+      plot_kpoint(:, total_pts) = kpoint_path%points(:, bands_num_spec_points)
+    end if
     !
     ! Write out the kpoints in the path
     !
-    bndunit = io_file_unit()
-    open (bndunit, file=trim(seedname)//'_band.kpt', form='formatted')
-    write (bndunit, *) total_pts
-    do loop_spts = 1, total_pts
-      write (bndunit, '(3f12.6,3x,a)') (plot_kpoint(loop_i, loop_spts), loop_i=1, 3), "1.0"
-    end do
-    close (bndunit)
-    !
-    ! Write out information on high-symmetry points in the path
-    !
-    bndunit = io_file_unit()
-    open (bndunit, file=trim(seedname)//'_band.labelinfo.dat', form='formatted')
-    do loop_spts = 1, bands_num_spec_points
-      if ((MOD(loop_spts, 2) .eq. 1) .and. &
-          (kpath_print_first_point((loop_spts + 1)/2) .eqv. .false.)) cycle
-      write (bndunit, '(a,3x,I10,3x,4f18.10)') &
-        kpoint_path%labels(loop_spts), &
-        idx_special_points(loop_spts), &
-        xval_special_points(loop_spts), &
-        (plot_kpoint(loop_i, idx_special_points(loop_spts)), loop_i=1, 3)
-    end do
-    close (bndunit)
+    if (on_root) then
+      open (newunit=bndunit, file=trim(seedname)//'_band.kpt', form='formatted')
+      write (bndunit, *) total_pts
+      do loop_spts = 1, total_pts
+        write (bndunit, '(3f12.6,3x,a)') (plot_kpoint(loop_i, loop_spts), loop_i=1, 3), "1.0"
+      end do
+      close (bndunit)
+      !
+      ! Write out information on high-symmetry points in the path
+      !
+      open (newunit=bndunit, file=trim(seedname)//'_band.labelinfo.dat', form='formatted')
+      if (kpoint_path%bands_kpt_explicit) then
+        do loop_spts = 1, num_spts
+          write (bndunit, '(a,3x,I10,3x,4f18.10)') &
+            kpoint_path%labels(label_idx_special_points(loop_spts)), &
+            idx_special_points(loop_spts), &
+            xval_special_points(loop_spts), &
+            (plot_kpoint(loop_i, idx_special_points(loop_spts)), loop_i=1, 3)
+        end do
+      else
+        do loop_spts = 1, bands_num_spec_points
+          if ((MOD(loop_spts, 2) .eq. 1) .and. &
+              (kpath_print_first_point((loop_spts + 1)/2) .eqv. .false.)) cycle
+          write (bndunit, '(a,3x,I10,3x,4f18.10)') &
+            kpoint_path%labels(loop_spts), &
+            idx_special_points(loop_spts), &
+            xval_special_points(loop_spts), &
+            (plot_kpoint(loop_i, idx_special_points(loop_spts)), loop_i=1, 3)
+        end do
+      end if
+      close (bndunit)
+    endif ! on_root
     !
     ! Cut H matrix in real-space
     !
     if (index(band_plot%mode, 'cut') .ne. 0) then
-      call plot_cut_hr(band_plot, real_space_ham, real_lattice, mp_grid, num_wann, &
+      call plot_cut_hr(real_space_ham, real_lattice, mp_grid, num_wann, &
                        wannier_centres_translated, stdout, error)
       if (allocated(error)) return
     endif
@@ -569,15 +747,20 @@ contains
         return
       endif
     endif
-
+    if (on_root .and. print_output%timing_level > 2) then
+      call io_stopwatch_start('plot: interpolate_bands: loop_kpoints', timer)
+    endif
     ! [lp] the s-k and cut codes are very similar when use_ws_distance is used, a complete
     !      merge after this point is not impossible
-    do loop_kpt = 1, total_pts
+    call comms_array_split(total_pts, counts, displs, comm)
+    ! Don't worry about serial run, it is OK to call comms_array_split!
+    do loop_kpt = displs(my_node_id) + 1, displs(my_node_id) + counts(my_node_id)
+      ! do loop_kpt = 1, total_pts
       ham_kprm = cmplx_0
       !
       if (index(band_plot%mode, 's-k') .ne. 0) then
         do irpt = 1, nrpts
-! [lp] Shift the WF to have the minimum distance IJ, see also ws_distance.F90
+          ! [lp] Shift the WF to have the minimum distance IJ, see also ws_distance.F90
           if (ws_region%use_ws_distance) then
             do j = 1, num_wann
             do i = 1, num_wann
@@ -591,7 +774,7 @@ contains
             enddo
             enddo
           else
-! [lp] Original code, without IJ-dependent shift:
+            ! [lp] Original code, without IJ-dependent shift:
             rdotk = twopi*dot_product(plot_kpoint(:, loop_kpt), irvec(:, irpt))
             fac = cmplx(cos(rdotk), sin(rdotk), dp)/real(ndegen(irpt), dp)
             ham_kprm = ham_kprm + fac*ham_r(:, :, irpt)
@@ -600,7 +783,7 @@ contains
         ! end of s-k mode
       elseif (index(band_plot%mode, 'cut') .ne. 0) then
         do irpt = 1, nrpts_cut
-! [lp] Shift the WF to have the minimum distance IJ, see also ws_distance.F90
+          ! [lp] Shift the WF to have the minimum distance IJ, see also ws_distance.F90
           if (ws_region%use_ws_distance) then
             do j = 1, num_wann
             do i = 1, num_wann
@@ -612,10 +795,10 @@ contains
               enddo
             enddo
             enddo
-! [lp] Original code, without IJ-dependent shift:
+            ! [lp] Original code, without IJ-dependent shift:
           else
             rdotk = twopi*dot_product(plot_kpoint(:, loop_kpt), irvec_cut(:, irpt))
-!~[aam] check divide by ndegen?
+            !~[aam] check divide by ndegen?
             fac = cmplx(cos(rdotk), sin(rdotk), dp)
             ham_kprm = ham_kprm + fac*ham_r_cut(:, :, irpt)
           endif ! end of use_ws_distance
@@ -653,22 +836,31 @@ contains
       end if
       !
     end do
+
+    call comms_reduce(eig_int(1, 1), num_wann*total_pts, 'SUM', error, comm)
+    call comms_reduce(bands_proj(1, 1), num_wann*total_pts, 'SUM', error, comm)
+
+    if (on_root .and. print_output%timing_level > 2) then
+      call io_stopwatch_stop('plot: interpolate_bands: loop_kpoints', timer)
+    endif
     !
     ! Interpolation Finished!
     ! Now we write plotting files
     !
-    emin = minval(eig_int) - 1.0_dp
-    emax = maxval(eig_int) + 1.0_dp
+    if (on_root) then
+      emin = minval(eig_int) - 1.0_dp
+      emax = maxval(eig_int) + 1.0_dp
 
-    if (index(band_plot%format, 'gnu') > 0) then
-      call plot_interpolate_gnuplot(band_plot, kpoint_path, bands_num_spec_points, num_wann)
+      if (index(band_plot%format, 'gnu') > 0) then
+        call plot_interpolate_gnuplot(band_plot, kpoint_path, bands_num_spec_points, num_wann)
+      endif
+      if (index(band_plot%format, 'xmgr') > 0) then
+        call plot_interpolate_xmgrace(kpoint_path, bands_num_spec_points, num_wann, error)
+      endif
+      write (stdout, '(1x,a,f11.3,a)') &
+        'Time to calculate interpolated band structure ', io_time() - time0, ' (sec)'
+      write (stdout, *)
     endif
-    if (index(band_plot%format, 'xmgr') > 0) then
-      call plot_interpolate_xmgrace(kpoint_path, bands_num_spec_points, num_wann)
-    endif
-    write (stdout, '(1x,a,f11.3,a)') &
-      'Time to calculate interpolated band structure ', io_time() - time0, ' (sec)'
-    write (stdout, *)
 
     if (allocated(ham_r_cut)) then
       deallocate (ham_r_cut, stat=ierr)
@@ -703,11 +895,19 @@ contains
         return
       endif
     endif
+    if (allocated(label_idx_special_points)) then
+      deallocate (label_idx_special_points, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating label_idx_special_points in &
+            &plot_interpolate_bands', comm)
+        return
+      endif
+    endif
 
   contains
 
     !================================================!
-    subroutine plot_cut_hr(band_plot, real_space_ham, real_lattice, mp_grid, num_wann, &
+    subroutine plot_cut_hr(real_space_ham, real_lattice, mp_grid, num_wann, &
                            wannier_centres_translated, stdout, error)
       !================================================!
       !
@@ -735,7 +935,6 @@ contains
 
       ! arguments
       type(real_space_ham_type), intent(in) :: real_space_ham
-      type(band_plot_type), intent(in) :: band_plot
       type(w90_error_type), allocatable, intent(out) :: error
 
       real(kind=dp), intent(in) :: real_lattice(3, 3)
@@ -923,7 +1122,6 @@ contains
       !================================================!
 
       use w90_constants, only: dp
-      use w90_io, only: io_file_unit
       use w90_types, only: kpoint_path_type
       use w90_wannier90_types, only: band_plot_type
 
@@ -934,10 +1132,8 @@ contains
       type(kpoint_path_type), intent(in) :: kpoint_path
       integer, intent(in) :: num_wann, bands_num_spec_points
 
-      bndunit = io_file_unit()
-      open (bndunit, file=trim(seedname)//'_band.dat', form='formatted')
-      gnuunit = io_file_unit()
-      open (gnuunit, file=trim(seedname)//'_band.gnu', form='formatted')
+      open (newunit=bndunit, file=trim(seedname)//'_band.dat', form='formatted')
+      open (newunit=gnuunit, file=trim(seedname)//'_band.gnu', form='formatted')
       !
       ! Gnuplot format
       !
@@ -953,30 +1149,53 @@ contains
       enddo
       close (bndunit)
       ! Axis labels
-      glabel(1) = TRIM(kpoint_path%labels(1))
-      do i = 2, num_paths
-        if (kpoint_path%labels(2*(i - 1)) /= kpoint_path%labels(2*(i - 1) + 1)) then
-          glabel(i) = TRIM(kpoint_path%labels(2*(i - 1)))//'|'// &
-                      TRIM(kpoint_path%labels(2*(i - 1) + 1))
-        else
-          glabel(i) = TRIM(kpoint_path%labels(2*(i - 1)))
-        end if
-      end do
-      glabel(num_paths + 1) = TRIM(kpoint_path%labels(2*num_paths))
+      if (kpoint_path%bands_kpt_explicit) then
+        do i = 1, num_spts
+          if (i > 1) then
+            if (idx_special_points(i) .eq. idx_special_points(i - 1) + 1 .and. &
+                kpoint_path%labels(label_idx_special_points(i)) .ne. kpoint_path%labels(label_idx_special_points(i - 1))) then
+              ! If two different point indeces are consecutive, the label should be combined
+              glabel(i) = TRIM(kpoint_path%labels(label_idx_special_points(i - 1)))//'|'// &
+                          TRIM(kpoint_path%labels(label_idx_special_points(i)))
+            end if
+          else
+            glabel(i) = TRIM(kpoint_path%labels(label_idx_special_points(i)))
+          end if
+        end do
+      else
+        glabel(1) = TRIM(kpoint_path%labels(1))
+        do i = 2, num_paths
+          if (kpoint_path%labels(2*(i - 1)) /= kpoint_path%labels(2*(i - 1) + 1)) then
+            glabel(i) = TRIM(kpoint_path%labels(2*(i - 1)))//'|'// &
+                        TRIM(kpoint_path%labels(2*(i - 1) + 1))
+          else
+            glabel(i) = TRIM(kpoint_path%labels(2*(i - 1)))
+          end if
+        end do
+        glabel(num_paths + 1) = TRIM(kpoint_path%labels(2*num_paths))
+      end if
       ! gnu file
       write (gnuunit, 701) xval(total_pts), emin, emax
-      do i = 1, num_paths - 1
-        write (gnuunit, 705) sum(kpath_len(1:i)), emin, sum(kpath_len(1:i)), emax
-      enddo
-      write (gnuunit, 702, advance="no") TRIM(glabel(1)), 0.0_dp, &
-        (TRIM(glabel(i + 1)), sum(kpath_len(1:i)), i=1, bands_num_spec_points/2 - 1)
-      write (gnuunit, 703) TRIM(glabel(1 + bands_num_spec_points/2)), sum(kpath_len(:))
+      if (kpoint_path%bands_kpt_explicit) then
+        do i = 1, num_spts
+          write (gnuunit, 705) xval(idx_special_points(i)), emin, xval(idx_special_points(i)), emax
+        end do
+        write (gnuunit, 702, advance="no") TRIM(glabel(1)), 0.0_dp, &
+          (TRIM(glabel(i)), xval(idx_special_points(i)), i=2, num_spts - 1)
+        write (gnuunit, 703) TRIM(glabel(num_spts)), xval(idx_special_points(num_spts))
+      else
+        do i = 1, num_paths - 1
+          write (gnuunit, 705) sum(kpath_len(1:i)), emin, sum(kpath_len(1:i)), emax
+        enddo
+        write (gnuunit, 702, advance="no") TRIM(glabel(1)), 0.0_dp, &
+          (TRIM(glabel(i + 1)), sum(kpath_len(1:i)), i=1, bands_num_spec_points/2 - 1)
+        write (gnuunit, 703) TRIM(glabel(1 + bands_num_spec_points/2)), sum(kpath_len(:))
+      end if
       write (gnuunit, *) 'plot ', '"'//trim(seedname)//'_band.dat', '"'
       close (gnuunit)
 
       if (allocated(band_plot%project)) then
-        gnuunit = io_file_unit()
-        open (gnuunit, file=trim(seedname)//'_band_proj.gnu', form='formatted')
+        open (newunit=gnuunit, file=trim(seedname)//'_band_proj.gnu', form='formatted')
         write (gnuunit, '(a)') '#File to plot a colour-mapped Bandstructure'
         write (gnuunit, '(a)') 'set palette defined ( 0 "blue", 3 "green", 6 "yellow", 10 "red" )'
         write (gnuunit, '(a)') 'unset ztics'
@@ -988,9 +1207,15 @@ contains
         write (gnuunit, '(a)') 'set view 0,0'
         write (gnuunit, '(a,f9.5,a)') 'set xrange [0:', xval(total_pts), ']'
         write (gnuunit, '(a,f9.5,a,f9.5,a)') 'set yrange [', emin, ':', emax, ']'
-        write (gnuunit, 702, advance="no") glabel(1), 0.0_dp, &
-          (glabel(i + 1), sum(kpath_len(1:i)), i=1, bands_num_spec_points/2 - 1)
-        write (gnuunit, 703) glabel(1 + bands_num_spec_points/2), sum(kpath_len(:))
+        if (kpoint_path%bands_kpt_explicit) then
+          write (gnuunit, 702, advance="no") TRIM(glabel(1)), 0.0_dp, &
+            (TRIM(glabel(i)), xval(idx_special_points(i)), i=2, num_spts - 1)
+          write (gnuunit, 703) TRIM(glabel(num_spts)), xval(idx_special_points(num_spts))
+        else
+          write (gnuunit, 702, advance="no") glabel(1), 0.0_dp, &
+            (glabel(i + 1), sum(kpath_len(1:i)), i=1, bands_num_spec_points/2 - 1)
+          write (gnuunit, 703) glabel(1 + bands_num_spec_points/2), sum(kpath_len(:))
+        end if
 
         write (gnuunit, '(a,a,a,a)') 'splot ', '"'//trim(seedname)//'_band.dat', '"', &
           ' u 1:2:3 w p pt 13 palette'
@@ -1008,21 +1233,28 @@ contains
     end subroutine plot_interpolate_gnuplot
 
     !================================================!
-    subroutine plot_interpolate_xmgrace(kpoint_path, bands_num_spec_points, num_wann)
+    subroutine plot_interpolate_xmgrace(kpoint_path, bands_num_spec_points, num_wann, error)
       !================================================!
       !
       !! Plots the interpolated band structure in Xmgrace format
       !
       !================================================!
 
-      use w90_io, only: io_file_unit, io_date
+      use w90_io, only: io_date
       use w90_types, only: kpoint_path_type
+      use w90_error, only: w90_error_type, set_error_warn
 
       implicit none
 
       type(kpoint_path_type), intent(in) :: kpoint_path
+      type(w90_error_type), allocatable, intent(out) :: error
+
       integer, intent(in) :: num_wann, bands_num_spec_points
       character(len=9) :: cdate, ctime
+
+      if (kpoint_path%bands_kpt_explicit) then
+        call set_error_warn(error, "bands_kpt_explicit not implemented with xmgrace format", comm)
+      end if
 
       call io_date(cdate, ctime)
 
@@ -1048,8 +1280,7 @@ contains
       end do
       xlabel(num_paths + 1) = ctemp(bands_num_spec_points)
 
-      gnuunit = io_file_unit()
-      open (gnuunit, file=trim(seedname)//'_band.agr', form='formatted')
+      open (newunit=gnuunit, file=trim(seedname)//'_band.agr', form='formatted')
       !
       ! Xmgrace format
       !
@@ -1114,7 +1345,7 @@ contains
     !================================================!
 
     use w90_constants, only: dp, cmplx_0, twopi
-    use w90_io, only: io_file_unit, io_date, io_time, io_stopwatch_start, io_stopwatch_stop
+    use w90_io, only: io_date, io_time, io_stopwatch_start, io_stopwatch_stop
     use w90_wannier90_types, only: fermi_surface_plot_type
     use w90_error, only: w90_error_type, set_error_alloc, set_error_fatal, set_error_warn
     use w90_types, only: timer_list_type
@@ -1125,7 +1356,7 @@ contains
     type(fermi_surface_plot_type), intent(in)   :: fermi_surface_plot
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     complex(kind=dp), intent(in) :: ham_r(:, :, :)
     character(len=50), intent(in)  :: seedname
     real(kind=dp), allocatable, intent(in)      :: fermi_energy_list(:)
@@ -1248,8 +1479,7 @@ contains
     end do
 
     call io_date(cdate, ctime)
-    bxsf_unit = io_file_unit()
-    open (bxsf_unit, FILE=trim(seedname)//'.bxsf', STATUS='UNKNOWN', FORM='FORMATTED')
+    open (newunit=bxsf_unit, FILE=trim(seedname)//'.bxsf', STATUS='UNKNOWN', FORM='FORMATTED')
     write (bxsf_unit, *) ' BEGIN_INFO'
     write (bxsf_unit, *) '      #'
     write (bxsf_unit, *) '      # this is a Band-XCRYSDEN-Structure-File'
@@ -1295,7 +1525,7 @@ contains
   subroutine plot_wannier(wannier_plot, wvfn_read, wannier_data, print_output, u_matrix_opt, &
                           dis_manifold, real_lattice, atom_data, kpt_latt, u_matrix, num_kpts, &
                           num_bands, num_wann, have_disentangled, spinors, bohr, stdout, seedname, &
-                          timer, error, comm)
+                          timer, dist_k, error, comm)
     !================================================!
     !! Plot the WF in Xcrysden format
     !! based on code written by Michel Posternak
@@ -1303,11 +1533,11 @@ contains
     !================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, twopi, cmplx_1
-    use w90_io, only: io_file_unit, io_date, io_stopwatch_start, io_stopwatch_stop
+    use w90_io, only: io_date, io_stopwatch_start, io_stopwatch_stop
     use w90_types, only: wannier_data_type, atom_data_type, dis_manifold_type, print_output_type, &
       timer_list_type
     use w90_wannier90_types, only: wvfn_read_type, wannier_plot_type
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
     use w90_error, only: w90_error_type, set_error_alloc, set_error_file, set_error_file, &
       set_error_warn
 
@@ -1322,7 +1552,7 @@ contains
     type(wvfn_read_type), intent(in) :: wvfn_read
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     complex(kind=dp), intent(in) :: u_matrix(:, :, :)
     complex(kind=dp), intent(in) :: u_matrix_opt(:, :, :)
@@ -1331,6 +1561,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     real(kind=dp), intent(in) :: real_lattice(3, 3)
 
+    integer, intent(in) :: dist_k(:)
     integer, intent(in) :: num_bands
     integer, intent(in) :: num_kpts
     integer, intent(in) :: num_wann
@@ -1360,8 +1591,6 @@ contains
     integer :: i, j, nsp, nat, nbnd, counter, ierr
     integer :: loop_kpt, ik, ix, iy, iz, nk, ngx, ngy, ngz, nxx, nyy, nzz
     integer :: loop_b, nx, ny, nz, npoint, file_unit, loop_w, num_inc
-    integer, allocatable :: counts(:)
-    integer, allocatable :: displs(:)
     integer :: wann_plot_num
 
     character(len=11) :: wfnname
@@ -1374,8 +1603,6 @@ contains
 
     on_root = .false.
     if (my_node_id == 0) on_root = .true.
-    allocate (counts(0:num_nodes - 1))
-    allocate (displs(0:num_nodes - 1))
 
     !
     if (print_output%timing_level > 1) call io_stopwatch_start('plot: wannier', timer)
@@ -1393,12 +1620,11 @@ contains
         return
       endif
 
-      file_unit = io_file_unit()
       if (wvfn_read%formatted) then
-        open (unit=file_unit, file=wfnname, form='formatted')
+        open (newunit=file_unit, file=wfnname, form='formatted')
         read (file_unit, *) ngx, ngy, ngz, nk, nbnd
       else
-        open (unit=file_unit, file=wfnname, form='unformatted')
+        open (newunit=file_unit, file=wfnname, form='unformatted')
         read (file_unit) ngx, ngy, ngz, nk, nbnd
       end if
       close (file_unit)
@@ -1460,6 +1686,7 @@ contains
 
       call io_date(cdate, ctime)
       do loop_kpt = 1, num_kpts
+        if (dist_k(loop_kpt) /= my_node_id) cycle
 
         inc_band = .true.
         num_inc = num_wann
@@ -1473,12 +1700,11 @@ contains
         else
           write (wfnname, 199) loop_kpt
         endif
-        file_unit = io_file_unit()
         if (wvfn_read%formatted) then
-          open (unit=file_unit, file=wfnname, form='formatted')
+          open (newunit=file_unit, file=wfnname, form='formatted')
           read (file_unit, *) ix, iy, iz, ik, nbnd
         else
-          open (unit=file_unit, file=wfnname, form='unformatted')
+          open (newunit=file_unit, file=wfnname, form='unformatted')
           read (file_unit) ix, iy, iz, ik, nbnd
         end if
 
@@ -1685,8 +1911,6 @@ contains
                 end do
               end do
             end do
-            wmod = wmod/sqrt(real(wmod)**2 + aimag(wmod)**2)
-            wann_func(:, :, :, loop_w) = wann_func(:, :, :, loop_w)/wmod
           end do
         endif
       endif
@@ -1714,7 +1938,10 @@ contains
             end do
             wmod = wmod/sqrt(real(wmod)**2 + aimag(wmod)**2)
             wann_func(:, :, :, loop_w) = wann_func(:, :, :, loop_w)/wmod
+            write (stdout, '(6x,a,i4,7x,a,f11.6,SP,f11.6,"i")') "Wannier Function Num: ", &
+              wannier_plot%list(loop_w), "Phase Factor = ", 1/wmod
           end do
+          write (stdout, *) ''
           !
           ! Check the 'reality' of the WF
           !
@@ -1739,8 +1966,7 @@ contains
         if (wannier_plot%format .eq. 'xcrysden') then
           call internal_xsf_format()
         elseif (wannier_plot%format .eq. 'cube') then
-          call internal_cube_format(atom_data, wannier_data, wvfn_read, have_disentangled, &
-                                    real_lattice, bohr, error)
+          call internal_cube_format(atom_data, wannier_data, real_lattice, bohr, error)
           if (allocated(error)) return
         else
           call set_error_warn(error, 'wannier_plot_format not recognised in wannier_plot', comm)
@@ -1757,8 +1983,7 @@ contains
   contains
 
     !================================================!
-    subroutine internal_cube_format(atom_data, wannier_data, wvfn_read, have_disentangled, &
-                                    real_lattice, bohr, error)
+    subroutine internal_cube_format(atom_data, wannier_data, real_lattice, bohr, error)
       !================================================!
       !
       !! Write WFs in Gaussian cube format.
@@ -1773,14 +1998,12 @@ contains
 
       implicit none
 
-      type(wvfn_read_type), intent(in) :: wvfn_read
       type(wannier_data_type), intent(in) :: wannier_data
       type(atom_data_type), intent(in) :: atom_data
       type(w90_error_type), allocatable, intent(out) :: error
       real(kind=dp), intent(in) :: bohr
 
       real(kind=dp), intent(in) :: real_lattice(3, 3)
-      logical, intent(in) :: have_disentangled
 
       real(kind=dp), allocatable :: wann_cube(:, :, :)
       real(kind=dp) :: inv_lattice(3, 3), recip_lattice(3, 3), pos_frac(3), volume
@@ -2010,8 +2233,7 @@ contains
           endif
 
           ! Write cube file (everything in Bohr)
-          file_unit = io_file_unit()
-          open (unit=file_unit, file=trim(wancube), form='formatted', status='unknown')
+          open (newunit=file_unit, file=trim(wancube), form='formatted', status='unknown')
           ! First two lines are comments
           write (file_unit, *) '     Generated by Wannier90 code http://www.wannier.org'
           write (file_unit, *) '     On ', cdate, ' at ', ctime
@@ -2124,8 +2346,7 @@ contains
 
           write (wanxsf, 201) trim(seedname), wannier_plot%list(loop_b)
 
-          file_unit = io_file_unit()
-          open (unit=file_unit, file=trim(wanxsf), form='formatted', status='unknown')
+          open (newunit=file_unit, file=trim(wanxsf), form='formatted', status='unknown')
           write (file_unit, *) '      #'
           write (file_unit, *) '      # Generated by the Wannier90 code http://www.wannier.org'
           write (file_unit, *) '      # On ', cdate, ' at ', ctime
@@ -2174,39 +2395,39 @@ contains
   end subroutine plot_wannier
 
   !================================================!
-  subroutine plot_u_matrices(u_matrix_opt, u_matrix, kpt_latt, have_disentangled, num_wann, &
-                             num_kpts, num_bands, seedname)
+  subroutine plot_u_matrices(u_matrix_opt, u_matrix, kpt_latt, dis_manifold, &
+                             have_disentangled, num_wann, num_kpts, num_bands, seedname)
     !================================================!
     !
     !! Plot u_matrix and u_matrix_opt to textfiles in readable format
     !
     !================================================!
 
-    use w90_io, only: io_file_unit, io_time, io_date
     use w90_constants, only: dp
+    use w90_io, only: io_time, io_date
+    use w90_types, only: dis_manifold_type
 
     implicit none
 
+    character(len=50), intent(in)  :: seedname
+    complex(kind=dp), intent(in) :: u_matrix(:, :, :)
+    complex(kind=dp), intent(in) :: u_matrix_opt(:, :, :)
+    integer, intent(in) :: num_bands
+    integer, intent(in) :: num_kpts
+    integer, intent(in) :: num_wann
+    logical, intent(in) :: have_disentangled
     real(kind=dp), intent(in) :: kpt_latt(:, :)
+    type(dis_manifold_type), intent(in) :: dis_manifold
 
-    integer             :: matunit
-    integer             :: i, j, nkp
     character(len=33)  :: header
     character(len=9)   :: cdate, ctime
-
-    integer, intent(in) :: num_wann
-    integer, intent(in) :: num_kpts
-    integer, intent(in) :: num_bands
-    complex(kind=dp), intent(in) :: u_matrix_opt(:, :, :)
-    complex(kind=dp), intent(in) :: u_matrix(:, :, :)
-    logical, intent(in) :: have_disentangled
-    character(len=50), intent(in)  :: seedname
+    complex(kind=dp), allocatable :: utmp(:, :) ! re-indexed u_matrix_opt for printout
+    integer :: matunit, i, j, nkp, ioff, nbw
 
     call io_date(cdate, ctime)
     header = 'written on '//cdate//' at '//ctime
 
-    matunit = io_file_unit()
-    open (matunit, file=trim(seedname)//'_u.mat', form='formatted')
+    open (newunit=matunit, file=trim(seedname)//'_u.mat', form='formatted')
 
     write (matunit, *) header
     write (matunit, *) num_kpts, num_wann, num_wann
@@ -2219,16 +2440,23 @@ contains
     close (matunit)
 
     if (have_disentangled) then
-      matunit = io_file_unit()
-      open (matunit, file=trim(seedname)//'_u_dis.mat', form='formatted')
+      allocate (utmp(num_bands, num_wann))
+
+      open (newunit=matunit, file=trim(seedname)//'_u_dis.mat', form='formatted')
       write (matunit, *) header
       write (matunit, *) num_kpts, num_wann, num_bands
       do nkp = 1, num_kpts
+        utmp = 0.d0
+        ioff = dis_manifold%nfirstwin(nkp)
+        nbw = dis_manifold%ndimwin(nkp)
+        utmp(ioff:ioff + nbw - 1, :) = u_matrix_opt(1:nbw, :, nkp)
         write (matunit, *)
         write (matunit, '(f15.10,sp,f15.10,sp,f15.10)') kpt_latt(:, nkp)
-        write (matunit, '(f15.10,sp,f15.10)') ((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann)
+        !write (matunit, '(f15.10,sp,f15.10)') ((u_matrix_opt(i, j, nkp), i=1, num_bands), j=1, num_wann)
+        write (matunit, '(f15.10,sp,f15.10)') ((utmp(i, j), i=1, num_bands), j=1, num_wann)
       end do
       close (matunit)
+      deallocate (utmp)
     endif
 
   end subroutine plot_u_matrices
@@ -2243,7 +2471,7 @@ contains
     !!
     !================================================!
 
-    use w90_io, only: io_file_unit, io_date
+    use w90_io, only: io_date
     use w90_constants, only: dp
     use w90_types, only: kmesh_info_type
     use w90_error, only: w90_error_type, set_error_file
@@ -2252,7 +2480,7 @@ contains
 
     type(kmesh_info_type), intent(in) :: kmesh_info
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer :: nkp, nn, file_unit
     character(len=33) :: header
@@ -2261,16 +2489,15 @@ contains
     integer, intent(in) :: num_kpts
     character(len=50), intent(in)  :: seedname
 
-    file_unit = io_file_unit()
     call io_date(cdate, ctime)
     header = 'written on '//cdate//' at '//ctime
 
-    open (file_unit, file=trim(seedname)//'.bvec', form='formatted', status='unknown', err=101)
+    open (newunit=file_unit, file=trim(seedname)//'.bvec', form='formatted', status='unknown', err=101)
     write (file_unit, *) header ! Date and time
     write (file_unit, *) num_kpts, kmesh_info%nntot
     do nkp = 1, num_kpts
       do nn = 1, kmesh_info%nntot
-        write (file_unit, '(4F14.8)') kmesh_info%bk(:, nn, nkp), kmesh_info%wb(nn)
+        write (file_unit, '(4F20.14)') kmesh_info%bk(:, nn, nkp), kmesh_info%wb(nn)
       enddo
     enddo
     close (file_unit)
@@ -2282,4 +2509,640 @@ contains
 
   end subroutine plot_bvec
 
-end module w90_plot
+  !================================================!
+  subroutine plot_write_rmn(kmesh_info, m_matrix, kpt_latt, irvec, nrpts, num_kpts, &
+                            num_wann, seedname, dist_k, error, comm)
+    !================================================!
+    !
+    !! Write out the matrix elements of r
+    !
+    !================================================!
+
+    use w90_comms, only: comms_reduce, w90_comm_type, mpisize, mpirank
+    use w90_constants, only: twopi, cmplx_i, dp
+    use w90_error, only: w90_error_type, set_error_file
+    use w90_io, only: io_date
+    use w90_types, only: kmesh_info_type
+
+    implicit none
+
+    ! arguments
+    type(kmesh_info_type), intent(in) :: kmesh_info
+    type(w90_error_type), allocatable, intent(out) :: error
+    type(w90_comm_type), intent(in) :: comm
+
+    integer, intent(in) :: nrpts
+    integer, intent(in) :: irvec(:, :)
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: num_kpts
+    integer, intent(in) :: dist_k(:) ! MPI k-point distribution
+    real(kind=dp), intent(in)     :: kpt_latt(:, :)
+    complex(kind=dp), intent(in)  :: m_matrix(:, :, :, :)
+    character(len=50), intent(in) :: seedname
+
+    ! local variables
+    integer :: loop_rpt, m, n, nkp, ind, nn, file_unit, ierr
+    integer :: my_node_id, nkp_rank
+    ! nkp_rank is the rank-local kpoint index for m_matrix decomposition
+    real(kind=dp) :: rdotk
+    complex(kind=dp) :: fac
+    complex(kind=dp) :: position(3)
+    character(len=33) :: header
+    character(len=9)  :: cdate, ctime
+    logical :: on_root = .false.
+
+    my_node_id = mpirank(comm)
+
+    if (my_node_id == 0) on_root = .true.
+
+    if (on_root) then
+      open (newunit=file_unit, file=trim(seedname)//'_r.dat', form='formatted', status='unknown', &
+            iostat=ierr)
+      if (ierr /= 0) then
+        call set_error_file(error, 'Error: hamiltonian_write_rmn: problem opening file '//trim(seedname)//'_r', comm)
+        return
+      endif
+
+      call io_date(cdate, ctime)
+      header = 'written on '//cdate//' at '//ctime
+      write (file_unit, *) header ! Date and time
+      write (file_unit, *) num_wann
+      write (file_unit, *) nrpts
+    endif
+
+    do loop_rpt = 1, nrpts
+      do m = 1, num_wann
+        do n = 1, num_wann
+
+          position(:) = 0._dp
+          nkp_rank = 1
+          do nkp = 1, num_kpts
+            if (dist_k(nkp) /= my_node_id) cycle
+
+            rdotk = twopi*dot_product(kpt_latt(:, nkp), real(irvec(:, loop_rpt), dp))
+            fac = exp(-cmplx_i*rdotk)/real(num_kpts, dp)
+            do ind = 1, 3
+              do nn = 1, kmesh_info%nntot
+                if (m .eq. n) then
+                  ! For loop_rpt==rpt_origin, this reduces to
+                  ! Eq.(32) of Marzari and Vanderbilt PRB 56,
+                  ! 12847 (1997). Otherwise, is is Eq.(44)
+                  ! Wang, Yates, Souza and Vanderbilt PRB 74,
+                  ! 195118 (2006), modified according to
+                  ! Eqs.(27,29) of Marzari and Vanderbilt
+                  position(ind) = position(ind) - kmesh_info%wb(nn)*kmesh_info%bk(ind, nn, nkp) &
+                                  *aimag(log(m_matrix(n, m, nn, nkp_rank)))*fac
+                else
+                  ! Eq.(44) Wang, Yates, Souza and Vanderbilt PRB 74, 195118 (2006)
+                  position(ind) = position(ind) + cmplx_i*kmesh_info%wb(nn) &
+                                  *kmesh_info%bk(ind, nn, nkp)*m_matrix(n, m, nn, nkp_rank)*fac
+                endif
+              end do
+            end do
+            nkp_rank = nkp_rank + 1
+          end do ! global k list
+          call comms_reduce(position(1), 3, 'SUM', error, comm)
+          if (on_root) write (file_unit, '(5I5,6F12.6)') irvec(:, loop_rpt), n, m, position(:)
+        end do
+      end do
+    end do
+
+    if (on_root) close (file_unit)
+  end subroutine plot_write_rmn
+
+  !================================================!
+  subroutine plot_write_r2mn(num_kpts, num_wann, kmesh_info, m_matrix, seedname, dist_k, error, comm)
+    !================================================!
+    !
+    ! Write seedname.r2mn file
+    !
+    !================================================!
+
+    use w90_comms, only: w90_comm_type
+    use w90_constants, only: dp
+    use w90_error, only: w90_error_type, set_error_file
+    use w90_types, only: kmesh_info_type
+
+    implicit none
+
+    type(kmesh_info_type), intent(in) :: kmesh_info
+    type(w90_error_type), allocatable, intent(out) :: error
+    type(w90_comm_type), intent(in) :: comm
+
+    integer, intent(in) :: num_kpts, num_wann
+    integer, intent(in) :: dist_k(:) ! MPI k-point distribution
+    complex(kind=dp), intent(in) :: m_matrix(:, :, :, :)
+    character(len=50), intent(in)  :: seedname
+
+    integer :: r2mnunit, nw1, nw2, nkp, nn, ierr
+    integer :: nkp_rank, my_node_id
+    real(kind=dp) :: r2ave_mn, delta
+    logical :: on_root = .false.
+
+    ! note that here I use formulas analogue to Eq. 23, and not to the
+    ! shift-invariant Eq. 32 .
+
+    my_node_id = mpirank(comm)
+
+    if (my_node_id == 0) on_root = .true.
+
+    if (on_root) then
+      open (newunit=r2mnunit, file=trim(seedname)//'.r2mn', form='formatted', iostat=ierr)
+      if (ierr /= 0) then
+        call set_error_file(error, 'Error opening file '//trim(seedname)//'.r2mn in plot_write_r2mn', comm)
+        return
+      endif
+    endif
+
+    do nw1 = 1, num_wann
+      do nw2 = 1, num_wann
+        r2ave_mn = 0.0_dp
+        delta = 0.0_dp
+        if (nw1 .eq. nw2) delta = 1.0_dp
+        nkp_rank = 1
+        do nkp = 1, num_kpts
+          if (dist_k(nkp) /= my_node_id) cycle
+
+          do nn = 1, kmesh_info%nntot
+            ! [GP-begin, Apr13, 2012: corrected sign inside "real"]
+            r2ave_mn = r2ave_mn + kmesh_info%wb(nn)* &
+                       (2.0_dp*delta - real(m_matrix(nw1, nw2, nn, nkp_rank) + &
+                                            conjg(m_matrix(nw2, nw1, nn, nkp_rank)), dp))
+          enddo
+          nkp_rank = nkp_rank + 1
+        enddo ! global k list
+        call comms_reduce(r2ave_mn, 1, 'SUM', error, comm)
+        r2ave_mn = r2ave_mn/real(num_kpts, dp)
+        if (on_root) write (r2mnunit, '(2i6,f20.12)') nw1, nw2, r2ave_mn
+      enddo
+    enddo
+    if (on_root) close (r2mnunit)
+  end subroutine plot_write_r2mn
+
+  !================================================!
+  subroutine plot_calc_projection(num_bands, num_wann, num_kpts, u_matrix_opt, eigval, lwindow, &
+                                  timing_level, iprint, stdout, timer)
+    !================================================!
+    !
+    ! Calculates and writes the projection of each Wannier function
+    ! on the original bands within the outer window.
+    !
+    !================================================!
+
+    use w90_comms, only: w90_comm_type
+    use w90_constants, only: dp
+    use w90_error, only: w90_error_type
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop
+    use w90_types, only: timer_list_type
+
+    implicit none
+
+    ! arguments
+    type(timer_list_type), intent(inout) :: timer
+    integer, intent(in) :: num_bands
+    integer, intent(in) :: num_kpts
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: stdout
+    integer, intent(in) :: timing_level, iprint
+    logical, intent(in) :: lwindow(:, :)
+    complex(kind=dp), intent(in) :: u_matrix_opt(:, :, :)
+    real(kind=dp), intent(in) :: eigval(:, :)
+
+    ! local variables
+    integer :: nw, nb, nkp, counter
+    real(kind=dp) :: summ
+
+    if (timing_level > 1 .and. iprint > 0) call io_stopwatch_start('wann: calc_projection', timer)
+
+    if (iprint > 0) then
+      write (stdout, '(/1x,a78)') repeat('-', 78)
+      write (stdout, '(1x,9x,a)') &
+        'Projection of Bands in Outer Window on all Wannier Functions'
+      write (stdout, '(1x,8x,62a)') repeat('-', 62)
+      write (stdout, '(1x,16x,a)') '   Kpt  Band      Eigval      |Projection|^2'
+      write (stdout, '(1x,16x,a47)') repeat('-', 47)
+    endif
+
+    do nkp = 1, num_kpts
+      counter = 0
+      do nb = 1, num_bands
+        if (lwindow(nb, nkp)) then
+          counter = counter + 1
+          summ = 0.0_dp
+          do nw = 1, num_wann
+            summ = summ + abs(u_matrix_opt(counter, nw, nkp))**2
+          enddo
+          if (iprint > 0) write (stdout, '(1x,16x,i5,1x,i5,1x,f14.6,2x,f14.8)') &
+            nkp, nb, eigval(nb, nkp), summ
+        endif
+      enddo
+    enddo
+    if (iprint > 0) write (stdout, '(1x,a78/)') repeat('-', 78)
+
+    if (timing_level > 1 .and. iprint > 0) call io_stopwatch_stop('wann: calc_projection', timer)
+
+    return
+
+  end subroutine plot_calc_projection
+
+  !================================================!
+  subroutine plot_write_vdw_data(num_wann, wannier_data, real_lattice, u_matrix, u_matrix_opt, &
+                                 have_disentangled, w90_system, error, comm, stdout, seedname)
+    !================================================!
+    !
+    ! Write a file with Wannier centres, spreads and occupations for
+    ! post-processing computation of vdW C6 coeffients.
+    !
+    ! Based on code written by Lampros Andrinopoulos.
+    !================================================!
+
+    use w90_constants, only: cmplx_0
+    use w90_constants, only: dp
+    use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_input
+    use w90_io, only: io_date
+    use w90_types, only: wannier_data_type, w90_system_type
+    use w90_utility, only: utility_translate_home
+
+    implicit none
+
+    type(wannier_data_type), intent(in) :: wannier_data
+    type(w90_system_type), intent(in) :: w90_system
+    type(w90_error_type), allocatable, intent(out)  :: error
+    type(w90_comm_type), intent(in) :: comm
+
+    integer, intent(in) :: num_wann
+    real(kind=dp), intent(in) :: real_lattice(3, 3)
+    complex(kind=dp), intent(in) :: u_matrix(:, :, :)
+    complex(kind=dp), intent(in) :: u_matrix_opt(:, :, :)
+    integer, intent(in) :: stdout
+    logical, intent(in) :: have_disentangled
+    character(len=50), intent(in)  :: seedname
+
+    integer          :: iw, vdw_unit, r, s, k, m, ierr, ndim
+    real(kind=dp)    :: wc(3, num_wann)
+    real(kind=dp)    :: ws(num_wann)
+    complex(kind=dp), allocatable :: f_w(:, :), v_matrix(:, :) !f_w2(:,:)
+
+    wc = wannier_data%centres
+    ws = wannier_data%spreads
+
+    ! translate Wannier centres to the home unit cell
+    do iw = 1, num_wann
+      call utility_translate_home(wc(:, iw), real_lattice)
+    enddo
+
+    allocate (f_w(num_wann, num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating f_w in plot_write_vdw_data', comm)
+      return
+    endif
+
+!~    ! aam: remove f_w2 at end
+!~    allocate(f_w2(num_wann, num_wann),stat=ierr)
+!~    if (ierr/=0) call io_error('Error in allocating f_w2 in plot_write_vdw_data')
+
+    if (have_disentangled) then
+
+      ! dimension of occupied subspace
+      if (w90_system%num_valence_bands .le. 0) then
+        call set_error_input(error, 'Please set num_valence_bands in seedname.win', comm)
+        return
+      endif
+
+      ndim = w90_system%num_valence_bands
+
+      allocate (v_matrix(ndim, num_wann), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating V_matrix in plot_write_vdw_data', comm)
+        return
+      endif
+
+      ! aam: initialise
+      f_w(:, :) = cmplx_0
+      v_matrix(:, :) = cmplx_0
+!~       f_w2(:,:) = cmplx_0
+
+      ! aam: IN THE END ONLY NEED DIAGONAL PART, SO COULD SIMPLIFY...
+      ! aam: calculate V = U_opt . U
+      do s = 1, num_wann
+        do k = 1, ndim
+          do m = 1, num_wann
+            v_matrix(k, s) = v_matrix(k, s) + u_matrix_opt(k, m, 1)*u_matrix(m, s, 1)
+          enddo
+        enddo
+      enddo
+
+      ! aam: calculate f = V^dagger . V
+      do r = 1, num_wann
+        do s = 1, num_wann
+          do k = 1, ndim
+            f_w(r, s) = f_w(r, s) + v_matrix(k, s)*conjg(v_matrix(k, r))
+          enddo
+        enddo
+      enddo
+
+!~       ! original formulation
+!~       do r=1,num_wann
+!~          do s=1,num_wann
+!~             do nkp=1,num_kpts
+!~                do k=1,ndimfroz(nkp)
+!~                   do m=1,num_wann
+!~                      do l=1,num_wann
+!~                         f_w2(r,s) = f_w2(r,s) + &
+!~                              u_matrix_opt(k,m,nkp) * u_matrix(m,s,nkp) * &
+!~                              conjg(u_matrix_opt(k,l,nkp)) * conjg(u_matrix(l,r,nkp))
+!~                      end do
+!~                   end do
+!~                end do
+!~             end do
+!~          end do
+!~       end do
+
+!~       ! test equivalence
+!~       do r=1,num_wann
+!~          do s=1,num_wann
+!~             if (abs(real(f_w(r,s),dp)-real(f_w2(r,s),dp)).gt.eps6) then
+!~                write(*,'(i6,i6,f16.10,f16.10)') r,s,real(f_w(r,s),dp),real(f_w2(r,s),dp)
+!~             endif
+!~             if (abs(aimag(f_w(r,s))-aimag(f_w2(r,s))).gt.eps6) then
+!~                write(*,'(a,i6,i6,f16.10,f16.10)') 'Im: ',r,s,aimag(f_w(r,s)),aimag(f_w2(r,s))
+!~             endif
+!~          enddo
+!~       enddo
+
+    else
+      ! for valence only, all occupancies are unity
+      f_w(:, :) = 1.0_dp
+    endif
+
+    ! aam: write the seedname.vdw file directly here
+    open (newunit=vdw_unit, file=trim(seedname)//'.vdw', action='write')
+    if (have_disentangled) then
+      write (vdw_unit, '(a)') 'disentangle T'
+    else
+      write (vdw_unit, '(a)') 'disentangle F'
+    endif
+    write (vdw_unit, '(a)') 'amalgamate F'
+    write (vdw_unit, '(a,i3)') 'degeneracy', w90_system%num_elec_per_state
+    write (vdw_unit, '(a)') 'num_frag 2'
+    write (vdw_unit, '(a)') 'num_wann'
+    write (vdw_unit, '(i3,1x,i3)') num_wann/2, num_wann/2
+    write (vdw_unit, '(a)') 'tol_occ 0.9'
+    write (vdw_unit, '(a)') 'pxyz'
+    write (vdw_unit, '(a)') 'F F F'
+    write (vdw_unit, '(a)') 'F F F'
+    write (vdw_unit, '(a)') 'tol_dist 0.05'
+    write (vdw_unit, '(a)') 'centres_spreads_occ'
+    write (vdw_unit, '(a)') 'ang'
+    do iw = 1, num_wann
+      write (vdw_unit, '(4(f13.10,1x),1x,f11.8)') wc(1:3, iw), ws(iw), real(f_w(iw, iw))
+    end do
+    close (vdw_unit)
+
+    write (stdout, '(/a/)') ' vdW data written to file '//trim(seedname)//'.vdw'
+
+    if (have_disentangled) then
+      deallocate (v_matrix, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating v_matrix in plot_write_vdw_data', comm)
+        return
+      endif
+    endif
+
+    deallocate (f_w, stat=ierr)
+    if (ierr /= 0) then
+      call set_error_dealloc(error, 'Error in deallocating f_w in plot_write_vdw_data', comm)
+      return
+    endif
+
+    return
+
+  end subroutine plot_write_vdw_data
+
+  !================================================!
+  subroutine plot_svd_omega_i(num_wann, num_kpts, kmesh_info, m_matrix, print_output, timer, &
+                              dist_k, error, comm, stdout)
+    !================================================!
+
+    use w90_comms, only: w90_comm_type, mpirank, comms_allreduce
+    use w90_constants, only: dp, cmplx_0
+    use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_fatal
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop
+    use w90_types, only: kmesh_info_type, print_output_type, timer_list_type
+
+    implicit none
+
+    ! arguments
+    complex(kind=dp), intent(in) :: m_matrix(:, :, :, :)
+    integer, intent(in) :: dist_k(:)
+    integer, intent(in) :: num_wann, num_kpts
+    integer, intent(in) :: stdout
+    type(kmesh_info_type), intent(in) :: kmesh_info
+    type(print_output_type), intent(in) :: print_output
+    type(timer_list_type), intent(inout) :: timer
+    type(w90_comm_type), intent(in) :: comm
+    type(w90_error_type), allocatable, intent(out) :: error
+
+    ! local variables
+    complex(kind=dp), allocatable :: cv1(:, :), cv2(:, :)
+    complex(kind=dp), allocatable :: cw1(:), cw2(:)
+    complex(kind=dp), allocatable :: cpad1(:)
+    real(kind=dp), allocatable :: singvd(:)
+
+    integer :: ierr, info, nkrank
+    integer :: nkp, nn, nb, na, ind
+    real(kind=dp) :: omt1, omt2, omt3
+
+    nkrank = count(dist_k == mpirank(comm)) ! number k this rank, for dimensioning
+
+    if (print_output%timing_level > 1 .and. print_output%iprint > 0) then
+      call io_stopwatch_start('wann: svd_omega_i', timer)
+    endif
+
+    allocate (cw1(10*num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating cw1 in plot_svd_omega_i', comm)
+      return
+    endif
+    allocate (cw2(10*num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating cw2 in plot_svd_omega_i', comm)
+      return
+    endif
+    allocate (cv1(num_wann, num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating cv1 in plot_svd_omega_i', comm)
+      return
+    endif
+    allocate (cv2(num_wann, num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating cv2 in plot_svd_omega_i', comm)
+      return
+    endif
+    allocate (singvd(num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating singvd in plot_svd_omega_i', comm)
+      return
+    endif
+    allocate (cpad1(num_wann*num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating cpad1 in plot_svd_omega_i', comm)
+      return
+    endif
+
+    cw1 = cmplx_0; cw2 = cmplx_0; cv1 = cmplx_0; cv2 = cmplx_0; cpad1 = cmplx_0
+    singvd = 0.0_dp
+
+    ! singular value decomposition
+    omt1 = 0.0_dp; omt2 = 0.0_dp; omt3 = 0.0_dp
+    do nkp = 1, nkrank
+      do nn = 1, kmesh_info%nntot
+        ind = 1
+        do nb = 1, num_wann
+          do na = 1, num_wann
+            cpad1(ind) = m_matrix(na, nb, nn, nkp)
+            ind = ind + 1
+          enddo
+        enddo
+        call zgesvd('A', 'A', num_wann, num_wann, cpad1, num_wann, singvd, cv1, &
+                    num_wann, cv2, num_wann, cw1, 10*num_wann, cw2, info)
+        if (info .ne. 0) then
+          call set_error_fatal(error, 'ERROR: Singular value decomp. zgesvd failed', comm)
+          return
+        endif
+
+        do nb = 1, num_wann
+          omt1 = omt1 + kmesh_info%wb(nn)*(1.0_dp - singvd(nb)**2)
+          omt2 = omt2 - kmesh_info%wb(nn)*(2.0_dp*log(singvd(nb)))
+          omt3 = omt3 + kmesh_info%wb(nn)*(acos(singvd(nb))**2)
+        enddo
+      enddo
+    enddo
+    call comms_allreduce(omt1, 1, 'SUM', error, comm)
+    call comms_allreduce(omt2, 1, 'SUM', error, comm)
+    call comms_allreduce(omt3, 1, 'SUM', error, comm)
+    omt1 = omt1/real(num_kpts, dp)
+    omt2 = omt2/real(num_kpts, dp)
+    omt3 = omt3/real(num_kpts, dp)
+    if (print_output%iprint > 0) then
+      write (stdout, *) ' '
+      write (stdout, '(2x,a,f15.9,1x,a)') 'Omega Invariant:   1-s^2 = ', &
+        omt1*print_output%lenconfac**2, '('//trim(print_output%length_unit)//'^2)'
+      write (stdout, '(2x,a,f15.9,1x,a)') '                 -2log s = ', &
+        omt2*print_output%lenconfac**2, '('//trim(print_output%length_unit)//'^2)'
+      write (stdout, '(2x,a,f15.9,1x,a)') '                  acos^2 = ', &
+        omt3*print_output%lenconfac**2, '('//trim(print_output%length_unit)//'^2)'
+    endif
+
+    deallocate (cpad1, stat=ierr)
+    if (ierr /= 0) then
+      call set_error_dealloc(error, 'Error in deallocating cpad1 in plot_svd_omega_i', comm)
+      return
+    endif
+    deallocate (singvd, stat=ierr)
+    if (ierr /= 0) then
+      call set_error_dealloc(error, 'Error in deallocating singvd in plot_svd_omega_i', comm)
+      return
+    endif
+    deallocate (cv2, stat=ierr)
+    if (ierr /= 0) then
+      call set_error_dealloc(error, 'Error in deallocating cv2 in plot_svd_omega_i', comm)
+      return
+    endif
+    deallocate (cv1, stat=ierr)
+    if (ierr /= 0) then
+      call set_error_dealloc(error, 'Error in deallocating cv1 in plot_svd_omega_i', comm)
+      return
+    endif
+    deallocate (cw2, stat=ierr)
+    if (ierr /= 0) then
+      call set_error_dealloc(error, 'Error in deallocating cw2 in plot_svd_omega_i', comm)
+      return
+    endif
+    deallocate (cw1, stat=ierr)
+    if (ierr /= 0) then
+      call set_error_dealloc(error, 'Error in deallocating cw1 in plot_svd_omega_i', comm)
+      return
+    endif
+
+    if (print_output%timing_level > 1 .and. print_output%iprint > 0) then
+      call io_stopwatch_stop('wann: svd_omega_i', timer)
+    endif
+  end subroutine plot_svd_omega_i
+
+  !================================================!
+  subroutine plot_write_xyz(translate_home_cell, num_wann, wannier_centres, real_lattice, &
+                            atom_data, print_output, error, comm, stdout, seedname)
+    !================================================!
+    !
+    ! Write xyz file with Wannier centres
+    !
+    !================================================!
+
+    use w90_io, only: io_date
+    use w90_constants, only: dp, cmplx_0
+    use w90_utility, only: utility_translate_home
+    use w90_error, only: w90_error_type, set_error_file
+    use w90_types, only: atom_data_type, print_output_type
+
+    implicit none
+
+    type(atom_data_type), intent(in) :: atom_data
+    type(print_output_type), intent(in) :: print_output
+    type(w90_error_type), allocatable, intent(out) :: error
+    type(w90_comm_type), intent(in) :: comm
+
+    logical, intent(in) :: translate_home_cell
+    integer, intent(in) :: num_wann
+    real(kind=dp), intent(in) :: wannier_centres(:, :)
+    real(kind=dp), intent(in) :: real_lattice(3, 3)
+    integer, intent(in) :: stdout
+    character(len=50), intent(in)  :: seedname
+
+    integer :: iw, ind, xyz_unit, nsp, nat, ierr
+    character(len=9) :: cdate, ctime
+    real(kind=dp) :: wc(3, num_wann)
+
+    wc = wannier_centres
+
+    if (translate_home_cell) then
+      do iw = 1, num_wann
+        call utility_translate_home(wc(:, iw), real_lattice)
+      enddo
+    endif
+
+    if (print_output%iprint > 2) then
+      write (stdout, '(1x,a)') 'Final centres (translated to home cell for writing xyz file)'
+      do iw = 1, num_wann
+        write (stdout, '(2x, "WF centre", i5, 2x, "(", f10.6, ",", f10.6, ",", f10.6, " )")') &
+          iw, (wc(ind, iw)*print_output%lenconfac, ind=1, 3)
+      end do
+      write (stdout, '(1x,a78)') repeat('-', 78)
+      write (stdout, *)
+    endif
+
+    open (newunit=xyz_unit, file=trim(seedname)//'_centres.xyz', form='formatted', iostat=ierr)
+    if (ierr /= 0) then
+      call set_error_file(error, 'Error opening file '//trim(seedname)//'_centres.xyz in wann_write_xyz', comm)
+      return
+    endif
+    write (xyz_unit, '(i6)') num_wann + atom_data%num_atoms
+    call io_date(cdate, ctime)
+    write (xyz_unit, *) 'Wannier centres, written by Wannier90 on'//cdate//' at '//ctime
+    do iw = 1, num_wann
+      write (xyz_unit, '("X",6x,3(f14.8,3x))') (wc(ind, iw), ind=1, 3)
+    end do
+    do nsp = 1, atom_data%num_species
+      do nat = 1, atom_data%species_num(nsp)
+        write (xyz_unit, '(a2,5x,3(f14.8,3x))') atom_data%symbol(nsp), atom_data%pos_cart(:, nat, nsp)
+      end do
+    end do
+    close (xyz_unit)
+
+    write (stdout, '(/a)') ' Wannier centres written to file '//trim(seedname)//'_centres.xyz'
+
+    return
+
+  end subroutine plot_write_xyz
+
+end module w90_plot_mod

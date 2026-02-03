@@ -98,12 +98,12 @@ contains
     !
     !================================================!
 
-    use w90_comms, only: comms_reduce, w90comm_type, mpirank, mpisize
+    use w90_comms, only: comms_reduce, w90_comm_type, mpirank, mpisize
     use w90_constants, only: dp, cmplx_0, pi, pw90_physical_constants_type
     use w90_utility, only: utility_recip_lattice_base
-    use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, get_SS_R, get_SHC_R, &
-      get_SAA_R, get_SBB_R
-    use w90_io, only: io_file_unit, io_stopwatch_start, io_stopwatch_stop
+    use w90_get_oper, only: get_HH_R, get_AA_R_effective, get_AA_R, get_BB_R, get_CC_R, get_SS_R, get_SHC_R, &
+      get_SH_R, get_SAA_R, get_SBB_R
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop
     use w90_types, only: print_output_type, wannier_data_type, &
       dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_mod_type, &
@@ -124,7 +124,7 @@ contains
     type(pw90_physical_constants_type), intent(in) :: physics
     type(ws_region_type), intent(in) :: ws_region
     type(pw90_spin_hall_type), intent(in) :: pw90_spin_hall
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -262,13 +262,17 @@ contains
     if (eval_ahc) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, &
+                    ws_region, stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      endif
       if (allocated(error)) return
       imf_list = 0.0_dp
       adpt_counter_list = 0
@@ -277,22 +281,26 @@ contains
     if (eval_morb) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      endif
       if (allocated(error)) return
-      call get_BB_R(dis_manifold, kmesh_info, kpt_latt, print_output, BB_R, v_matrix, eigval, &
-                    scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
+      call get_BB_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, HH_R, BB_R, v_matrix, &
+                    eigval, scissors_shift, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
                     num_wann, have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_CC_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, CC_R, &
-                    v_matrix, eigval, scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, &
-                    num_bands, num_kpts, num_wann, have_disentangled, seedname, stdout, timer, &
-                    error, comm)
+      call get_CC_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
+                    HH_R, BB_R, CC_R, v_matrix, eigval, scissors_shift, wigner_seitz, ws_distance, &
+                    ws_region, num_bands, num_kpts, num_wann, have_disentangled, seedname, stdout, &
+                    timer, error, comm)
       if (allocated(error)) return
 
       imf_list2 = 0.0_dp
@@ -312,13 +320,17 @@ contains
     if (eval_kubo) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, &
-                    error, comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      endif
       if (allocated(error)) return
       allocate (kubo_H_k(3, 3, pw90_berry%kubo_nfreq))
       allocate (kubo_H(3, 3, pw90_berry%kubo_nfreq))
@@ -332,7 +344,7 @@ contains
       if (spin_decomp) then
 
         call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, &
-                      eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
+                      eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
                       num_wann, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
         allocate (kubo_H_k_spn(3, 3, 3, pw90_berry%kubo_nfreq))
@@ -351,13 +363,17 @@ contains
     if (eval_sc) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      endif
       if (allocated(error)) return
       allocate (sc_k_list(3, 6, pw90_berry%kubo_nfreq))
       allocate (sc_list(3, 6, pw90_berry%kubo_nfreq))
@@ -369,32 +385,41 @@ contains
 
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      endif
       if (allocated(error)) return
       call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, eigval, &
-                    wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                    wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                     have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
 
       if (index(pw90_spin_hall%method, 'qiao') > 0) then
         call get_SHC_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
                        pw90_spin_hall, SH_R, SHR_R, SR_R, v_matrix, eigval, scissors_shift, &
-                       wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                       wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                        num_valence_bands, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
       else
-        call get_SAA_R(dis_manifold, kmesh_info, kpt_latt, print_output, SAA_R, v_matrix, &
-                       scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, &
+        call get_SH_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
+                      pw90_spin_hall, SH_R, v_matrix, eigval, scissors_shift, &
+                      wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
+                      num_valence_bands, have_disentangled, seedname, stdout, timer, error, comm)
+        if (allocated(error)) return
+        call get_SAA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, SS_R, SAA_R, &
+                       v_matrix, scissors_shift, wigner_seitz, ws_distance, ws_region, num_bands, &
                        num_kpts, num_wann, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
-        call get_SBB_R(dis_manifold, kmesh_info, kpt_latt, print_output, SBB_R, v_matrix, &
-                       scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, &
+        call get_SBB_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, SH_R, SBB_R, &
+                       v_matrix, scissors_shift, wigner_seitz, ws_distance, ws_region, num_bands, &
                        num_kpts, num_wann, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
       endif
@@ -420,8 +445,8 @@ contains
     if (eval_kdotp) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
       kdotp_nbands = size(pw90_berry%kdotp_bands)
       allocate (kdotp(kdotp_nbands, kdotp_nbands, 3, 3, 3))
@@ -1137,8 +1162,7 @@ contains
             '---------------------------------'
           file_name = trim(seedname)//'-ahc-fermiscan.dat'
           write (stdout, '(/,3x,a)') '* '//file_name
-          file_unit = io_file_unit()
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         endif
         do if = 1, fermi_n
           if (fermi_n > 1) write (file_unit, '(4(F12.6,1x))') &
@@ -1224,8 +1248,7 @@ contains
             '---------------------------------'
           file_name = trim(seedname)//'-morb-fermiscan.dat'
           write (stdout, '(/,3x,a)') '* '//file_name
-          file_unit = io_file_unit()
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         endif
         do if = 1, fermi_n
           LCtil_list(:, :, if) = (img_list(:, :, if) &
@@ -1295,9 +1318,8 @@ contains
           file_name = trim(seedname)//'-kubo_S_'// &
                       achar(119 + i)//achar(119 + j)//'.dat'
           file_name = trim(file_name)
-          file_unit = io_file_unit()
           write (stdout, '(/,3x,a)') '* '//file_name
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
           do ifreq = 1, pw90_berry%kubo_nfreq
             if (spin_decomp) then
               write (file_unit, '(9E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
@@ -1332,9 +1354,8 @@ contains
           file_name = trim(seedname)//'-kubo_A_'// &
                       achar(119 + i)//achar(119 + j)//'.dat'
           file_name = trim(file_name)
-          file_unit = io_file_unit()
           write (stdout, '(/,3x,a)') '* '//file_name
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
           do ifreq = 1, pw90_berry%kubo_nfreq
             if (spin_decomp) then
               write (file_unit, '(9E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
@@ -1365,8 +1386,7 @@ contains
         !
         file_name = trim(seedname)//'-jdos.dat'
         write (stdout, '(/,3x,a)') '* '//file_name
-        file_unit = io_file_unit()
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         do ifreq = 1, pw90_berry%kubo_nfreq
           if (spin_decomp) then
             write (file_unit, '(5E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
@@ -1430,9 +1450,8 @@ contains
             file_name = trim(seedname)//'-sc_'// &
                         achar(119 + i)//achar(119 + j)//achar(119 + k)//'.dat'
             file_name = trim(file_name)
-            file_unit = io_file_unit()
             write (stdout, '(/,3x,a)') '* '//file_name
-            open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+            open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
             do ifreq = 1, pw90_berry%kubo_nfreq
               write (file_unit, '(2E18.8E3)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
                 fac*sc_list(i, jk, ifreq)
@@ -1482,9 +1501,8 @@ contains
           file_name = trim(seedname)//'-shc-freqscan'//'.dat'
         endif
         file_name = trim(file_name)
-        file_unit = io_file_unit()
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         if (.not. pw90_spin_hall%freq_scan) then
           write (file_unit, '(a,3x,a,3x,a)') &
             '#No.', 'Fermi energy(eV)', 'SHC((hbar/e)*S/cm)'
@@ -1518,16 +1536,15 @@ contains
         ! zeroth order in k
         file_name = trim(seedname)//'-kdotp_0.dat'
         file_name = trim(file_name)
-        file_unit = io_file_unit()
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         write (file_unit, '(2E18.8E3)') kdotp(:, :, 1, 1, 1)
         close (file_unit)
 
         ! first order in k
         file_name = trim(seedname)//'-kdotp_1.dat'
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         do i = 1, 3
           write (file_unit, '(2E18.8E3)') kdotp(:, :, 2, i, 1)
         end do
@@ -1536,7 +1553,7 @@ contains
         ! second order in k
         file_name = trim(seedname)//'-kdotp_2.dat'
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         do i = 1, 3
           do j = 1, 3
             write (file_unit, '(2E18.8E3)') kdotp(:, :, 3, i, j)
@@ -1567,7 +1584,7 @@ contains
 
     use w90_types, only: print_output_type, wannier_data_type, &
       dis_manifold_type, ws_region_type, ws_distance_type, timer_list_type
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
     use w90_postw90_types, only: wigner_seitz_type
 
     implicit none
@@ -1578,7 +1595,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -1672,7 +1689,7 @@ contains
     !
     !================================================!
 
-    use w90_comms, only: w90comm_type, mpirank
+    use w90_comms, only: w90_comm_type, mpirank
     use w90_constants, only: dp, cmplx_i
     use w90_types, only: print_output_type, wannier_data_type, &
       dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
@@ -1689,7 +1706,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -1936,7 +1953,7 @@ contains
     !================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, pi
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
     use w90_utility, only: utility_diagonalize, utility_rotate, utility_w0gauss, &
       utility_recip_lattice_base
     use w90_types, only: print_output_type, wannier_data_type, &
@@ -1959,7 +1976,7 @@ contains
     type(pw90_spin_mod_type), intent(in) :: pw90_spin
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -2173,7 +2190,7 @@ contains
     use w90_wan_ham, only: wham_get_D_h, &
       wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
       wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
     use w90_utility, only: utility_rotate, utility_zdotu, utility_recip_lattice_base
 
     implicit none
@@ -2185,7 +2202,7 @@ contains
     type(pw90_band_deriv_degen_type), intent(in) :: pw90_band_deriv_degen
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -2490,7 +2507,7 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_utility, only: utility_rotate, utility_recip_lattice_base
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
     use w90_types, only: print_output_type, wannier_data_type, &
       dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_hall_type, &
@@ -2510,7 +2527,7 @@ contains
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
     type(pw90_spin_hall_type), intent(in) :: pw90_spin_hall
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -2958,7 +2975,7 @@ contains
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_mod_type, &
       pw90_spin_hall_type, pw90_band_deriv_degen_type, pw90_oper_read_type, wigner_seitz_type, &
       kpoint_dist_type
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     implicit none
 
@@ -2972,7 +2989,7 @@ contains
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
     type(timer_list_type), intent(inout) :: timer
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
     complex(kind=dp), intent(out), dimension(:, :, :, :, :)     :: kdotp
