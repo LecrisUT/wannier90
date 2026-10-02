@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_utility: blas wrappers and other basic routines       !
@@ -21,7 +34,7 @@ module w90_utility
   !! Module contains lots of useful general routines
 
   use w90_constants, only: dp
-  use w90_comms, only: w90comm_type
+  use w90_comms, only: w90_comm_type
 
   implicit none
 
@@ -191,7 +204,7 @@ contains
     complex(kind=dp), intent(out), optional :: prod1(:, :), prod2(:, :)
 
     complex(kind=dp), allocatable :: tmp(:, :)
-    integer :: nb, mc, i, j
+    integer :: nb, mc, i, j, ierr
 
     ! query matrix sizes
     ! naming convention:
@@ -209,7 +222,13 @@ contains
     end if
 
     ! tmp = op(b).op(c)
-    allocate (tmp(nb, mc))
+    allocate (tmp(nb, mc), stat=ierr)
+    ! only called in postw90 - should propagate the errors
+    !   if (ierr /= 0) then
+    !     call set_error_alloc(error, 'Error in allocating tmp in utility_zgemmm', comm)
+    !     return
+    !   end if
+
     call utility_zgemm_new(b, c, tmp, transb, transc)
 
     ! prod1 = op(a).tmp
@@ -219,9 +238,11 @@ contains
 
     if (present(prod2) .and. present(eigval)) then
       ! tmp = diag(eigval).tmp
-      forall (i=1:nb, j=1:mc)
-      tmp(i, j) = eigval(i)*tmp(i, j)
-      end forall
+      do j = 1, mc
+        do i = 1, nb
+          tmp(i, j) = eigval(i)*tmp(i, j)
+        end do
+      end do
       ! prod2 = op(a).tmp
       call utility_zgemm_new(a, tmp, prod2, transa, 'N')
     end if
@@ -327,7 +348,7 @@ contains
     if (abs(volume) > eps5) then
       recip_lat = twopi*recip_lat/volume
       volume = abs(volume)
-    endif
+    end if
 
     return
 
@@ -342,7 +363,7 @@ contains
     !
     !================================================
 
-    use w90_constants, only: dp, twopi, eps5
+    use w90_constants, only: dp, eps5
     use w90_error, only: w90_error_type, set_error_fatal
 
     implicit none
@@ -350,7 +371,7 @@ contains
     real(kind=dp), intent(in)  :: real_lat(3, 3)
     real(kind=dp), intent(out) :: recip_lat(3, 3)
     real(kind=dp), intent(out) :: volume
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     call utility_recip_lattice_base(real_lat, recip_lat, volume)
 
@@ -411,12 +432,12 @@ contains
       do i = 1, j
         do l = 1, 3
           metric(i, j) = metric(i, j) + lattice(i, l)*lattice(j, l)
-        enddo
+        end do
         if (i .lt. j) then
           metric(j, i) = metric(i, j)
-        endif
-      enddo
-    enddo
+        end if
+      end do
+    end do
 
   end subroutine utility_metric
 
@@ -451,13 +472,11 @@ contains
     !
     !================================================
 
-    use w90_constants, only: twopi
-
     implicit none
 
-    real(kind=dp), intent(in)  :: inv_lat(3, 3)
-    real(kind=dp), intent(out)  :: frac(3)
-    real(kind=dp), intent(in)  :: cart(3)
+    real(kind=dp), intent(in) :: inv_lat(3, 3)
+    real(kind=dp), intent(out) :: frac(3)
+    real(kind=dp), intent(in) :: cart(3)
 
     integer :: i
 
@@ -496,8 +515,8 @@ contains
       if (ilett .ne. ispc) then
         icount = icount + 1
         utility_strip(icount:icount) = string(ipos:ipos)
-      endif
-    enddo
+      end if
+    end do
 
     utility_strip = trim(utility_strip)
 
@@ -533,7 +552,7 @@ contains
       ilett = ichar(string(ipos:ipos))
       if ((ilett .ge. iA) .and. (ilett .le. iZ)) &
         utility_lowercase(ipos:ipos) = char(ilett - idiff)
-    enddo
+    end do
 
     utility_lowercase = trim(adjustl(utility_lowercase))
 
@@ -557,7 +576,7 @@ contains
     character(len=maxlen), intent(in)  :: string_tmp
     real(kind=dp), intent(out) :: outvec(3)
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer :: pos
     character(len=maxlen) :: ctemp
@@ -568,7 +587,7 @@ contains
     if (pos <= 0) then
       call set_error_input(error, 'utility_string_to_coord: Problem reading string into real number '//trim(string_tmp), comm)
       return
-    endif
+    end if
 
     ctemp2 = ctemp(1:pos - 1)
     read (ctemp2, *, err=100, end=100) outvec(1)
@@ -615,12 +634,12 @@ contains
       if (r_frac(ind) .lt. 0.0_dp) then
         shift = real(ceiling(abs(r_frac(ind))), kind=dp)
         r_frac(ind) = r_frac(ind) + shift
-      endif
+      end if
       if (r_frac(ind) .gt. 1.0_dp) then
         shift = -real(int(r_frac(ind)), kind=dp)
         r_frac(ind) = r_frac(ind) + shift
-      endif
-    enddo
+      end if
+    end do
     ! Fractional --> Cartesian
     call utility_frac_to_cart(r_frac, r_home, real_lat)
 
@@ -646,7 +665,7 @@ contains
     real(kind=dp), intent(out) :: eig(dim)
     complex(kind=dp), intent(out) :: rot(dim, dim)
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     complex(kind=dp) :: mat_pack((dim*(dim + 1))/2), cwork(2*dim)
     real(kind=dp) :: rwork(7*dim)
@@ -656,8 +675,8 @@ contains
     do j = 1, dim
       do i = 1, j
         mat_pack(i + ((j - 1)*j)/2) = mat(i, j)
-      enddo
-    enddo
+      end do
+    end do
     rot = cmplx_0; eig = 0.0_dp; cwork = cmplx_0; rwork = 0.0_dp; iwork = 0
     call ZHPEVX('V', 'A', 'U', dim, mat_pack, 0.0_dp, 0.0_dp, 0, 0, -1.0_dp, &
                 nfound, eig(1), rot, dim, cwork, rwork, iwork, ifail, info)
@@ -666,13 +685,13 @@ contains
         ' ARGUMENT OF ZHPEVX HAD AN ILLEGAL VALUE'
       call set_error_fatal(error, errormsg, comm)
       return
-    endif
+    end if
     if (info > 0) then
-      write (errormsg, '(i3,a)') 'Error in utility_diagonalize: ', info, &
+      write (errormsg, '(a,i3,a)') 'Error in utility_diagonalize: ', info, &
         ' EIGENVECTORS FAILED TO CONVERGE'
       call set_error_fatal(error, errormsg, comm)
       return
-    endif
+    end if
 
   end subroutine utility_diagonalize
 
@@ -810,7 +829,7 @@ contains
     ! trace of the matrix product of a and b.
     !
     !================================================!
-    use w90_constants, only: dp, cmplx_0, cmplx_i
+    use w90_constants, only: dp
 
     complex(kind=dp), intent(in) :: a(:, :), b(:, :)
     real(kind=dp) :: utility_re_tr_prod
@@ -837,7 +856,7 @@ contains
     ! trace of the matrix product of a and b.
     !
     !================================================!
-    use w90_constants, only: dp, cmplx_0, cmplx_i
+    use w90_constants, only: dp
 
     complex(kind=dp), intent(in) :: a(:, :), b(:, :)
 
@@ -878,7 +897,7 @@ contains
     cdum = cmplx_0
     do i = 1, mydim
       cdum = cdum + mat(i, i)
-    enddo
+    end do
     utility_re_tr = aimag(cmplx_i*cdum)
 
   end function utility_re_tr
@@ -903,7 +922,7 @@ contains
     cdum = cmplx_0
     do i = 1, mydim
       cdum = cdum + mat(i, i)
-    enddo
+    end do
     utility_im_tr = aimag(cdum)
 
   end function utility_im_tr
@@ -927,10 +946,10 @@ contains
 
     ! arguments
     real(kind=dp) :: utility_wgauss, x
-    !! output: the value of the function
-    !! input: the argument of the function
+    !! *output*: the value of the function
+    !! *input*: the argument of the function
     integer :: n
-    !! input: the order of the function
+    !! *input*: the order of the function
 
     ! local variables
     real(kind=dp) :: a, hp, arg, hd, xp
@@ -954,10 +973,10 @@ contains
         utility_wgauss = 1.0_dp
       else
         utility_wgauss = 1.00_dp/(1.00_dp + exp(-x))
-      endif
+      end if
       return
 
-    endif
+    end if
     ! Cold smearing
     if (n .eq. -1) then
       xp = x - 1.00_dp/sqrt(2.00_dp)
@@ -966,7 +985,7 @@ contains
                                                                          arg) + 0.50_dp
       return
 
-    endif
+    end if
     ! Methfessel-Paxton
     utility_wgauss = gauss_freq(x*sqrt(2.00_dp))
     if (n .eq. 0) return
@@ -982,7 +1001,7 @@ contains
       utility_wgauss = utility_wgauss - a*hd
       hp = 2.00_dp*x*hd - 2.00_dp*DBLE(ni)*hp
       ni = ni + 1
-    enddo
+    end do
     return
   end function utility_wgauss
 
@@ -1005,13 +1024,13 @@ contains
 
     ! arguments
     real(kind=dp) :: utility_w0gauss
-    !! output: the value of the function
+    !! *output*: the value of the function
     real(kind=dp), intent(in) :: x
-    !! input: the point where to compute the function
+    !! *input*: the point where to compute the function
     integer, intent(in) :: n
-    !! input: the order of the smearing function
+    !! *input*: the order of the smearing function
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     ! local variables
     real(kind=dp) :: a, arg, hp, hd, sqrtpm1
@@ -1035,22 +1054,22 @@ contains
         ! in order to avoid problems for large values of x in the e
       else
         utility_w0gauss = 0.0_dp
-      endif
+      end if
       return
 
-    endif
+    end if
     ! cold smearing  (Marzari-Vanderbilt)
     if (n .eq. -1) then
       arg = min(200.0_dp, (x - 1.00_dp/sqrt(2.00_dp))**2)
       utility_w0gauss = sqrtpm1*exp(-arg)*(2.00_dp - sqrt(2.00_dp)*x)
       return
 
-    endif
+    end if
 
     if (n .gt. 10 .or. n .lt. 0) then
       call set_error_input(error, 'utility_w0gauss higher order (n>10) smearing is untested and unstable', comm)
       return
-    endif
+    end if
 
     ! Methfessel-Paxton
     arg = min(200.0_dp, x**2)
@@ -1067,7 +1086,7 @@ contains
       hp = 2.00_dp*x*hd - 2.00_dp*DBLE(ni)*hp
       ni = ni + 1
       utility_w0gauss = utility_w0gauss + a*hp
-    enddo
+    end do
     return
   end function utility_w0gauss
 
@@ -1085,7 +1104,7 @@ contains
     !! (n=-99): derivative of Fermi-Dirac function: 0.5/(1.0+cosh(x))
     !
     use w90_constants, only: dp, pi
-    use w90_error, only: w90_error_type, set_error_input
+    use w90_error, only: w90_error_type, set_error_input, set_error_alloc
 
     implicit none
 
@@ -1093,34 +1112,44 @@ contains
     type(w90_error_type), allocatable, intent(out) :: error
     real(kind=dp), intent(in) ::  x(:)
     real(kind=dp), allocatable  :: res(:), arg(:)
-    !! output: the value of the function
-    !! input: the point where to compute the function
+    !! *output*: the value of the function
+    !! *input*: the point where to compute the function
     integer :: n
-    !! input: the order of the smearing function
-    type(w90comm_type), intent(in) :: comm
+    !! *input*: the order of the smearing function
+    type(w90_comm_type), intent(in) :: comm
+    integer :: ierr
 
     ! local variables
     real(kind=dp) :: sqrtpm1
 
-    allocate (res(size(x)))
-    allocate (arg(size(x)))
+    allocate (res(size(x)), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating res in utility_w0gauss_vec', comm)
+      return
+    end if
+    allocate (arg(size(x)), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating arg in utility_w0gauss_vec', comm)
+      return
+    end if
+
     sqrtpm1 = 1.0_dp/sqrt(pi)
 
     if (n .eq. -99) then
       call set_error_input(error, 'utility_w0gauss_vec not implemented for n == 99', comm)
       return
-    endif
+    end if
 
     ! cold smearing  (Marzari-Vanderbilt)
     if (n .eq. -1) then
       call set_error_input(error, 'utility_w0gauss_vec not implemented for n == -1', comm)
       return
-    endif
+    end if
 
     if (n .gt. 10 .or. n .lt. 0) then
       call set_error_input(error, 'utility_w0gauss higher order smearing is untested and unstable', comm)
       return
-    endif
+    end if
 
     ! Methfessel-Paxton
     arg = min(200.0_dp, x**2)
@@ -1131,7 +1160,7 @@ contains
     else
       call set_error_input(error, 'utility_w0gauss_vec not implemented for n >0 ', comm)
       return
-    endif
+    end if
   end function utility_w0gauss_vec
 
   function qe_erf(x)
@@ -1166,8 +1195,8 @@ contains
                  /(q1(1) + x2*(q1(2) + x2*(q1(3) + x2*q1(4))))
       else
         qe_erf = 1.0_dp - qe_erfc(x)
-      endif
-    endif
+      end if
+    end if
     !
     return
   end function qe_erf
@@ -1218,7 +1247,7 @@ contains
                 (q2(1) + ax*(q2(2) + ax*(q2(3) + ax*(q2(4) + ax*(q2(5) + ax*(q2(6) + ax*(q2(7) + ax*q2(8))))))))
     else
       qe_erfc = 1.0_dp - qe_erf(ax)
-    endif
+    end if
     !
     ! erf(-x)=-erf(x)  =>  erfc(-x) = 2-erfc(x)
     !

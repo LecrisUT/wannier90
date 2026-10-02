@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_kpath: evaluate properties along a path in k-space    !
@@ -32,7 +45,7 @@ module w90_kpath
 
   use w90_constants, only: dp
   use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_fatal, &
-    set_error_input, set_error_fatal, set_error_file
+                       set_error_input, set_error_fatal, set_error_file
 
   implicit none
 
@@ -59,16 +72,16 @@ contains
     !
     !================================================!
 
-    use w90_comms, only: w90comm_type, mpirank, mpisize, comms_array_split, comms_scatterv, &
-      comms_gatherv, comms_bcast
+    use w90_comms, only: w90_comm_type, mpirank, mpisize, comms_array_split, comms_scatterv, &
+                         comms_gatherv, comms_bcast
     use w90_constants, only: dp, eps8
-    use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, get_SS_R, get_SHC_R
-    use w90_io, only: io_file_unit, io_time
+    use w90_get_oper, only: get_HH_R, get_AA_R_effective, get_AA_R, get_BB_R, get_CC_R, get_SS_R, get_SHC_R
+    use w90_io, only: io_time
     use w90_postw90_common, only: pw90common_fourier_R_to_k
     use w90_types, only: kpoint_path_type, print_output_type, wannier_data_type, &
-      dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_hall_type, pw90_kpath_mod_type, &
-      pw90_spin_mod_type, pw90_band_deriv_degen_type, pw90_oper_read_type, wigner_seitz_type
+                                 pw90_spin_mod_type, pw90_band_deriv_degen_type, pw90_oper_read_type, wigner_seitz_type
     use w90_berry, only: berry_get_imf_klist, berry_get_imfgh_klist, berry_get_shc_klist
     use w90_spin, only: spin_get_nk
     use w90_utility, only: utility_diagonalize, utility_recip_lattice_base
@@ -87,7 +100,7 @@ contains
     type(ws_region_type), intent(in) :: ws_region
     type(kpoint_path_type), intent(in) :: kpoint_path
     type(pw90_spin_hall_type), intent(in) :: pw90_spin_hall
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -171,7 +184,7 @@ contains
         if (pw90_berry%kubo_smearing%use_adaptive) then
           call set_error_input(error, 'Error: Must use fixed smearing when plotting spin Hall conductivity', comm)
           return
-        endif
+        end if
       end if
       if (plot_shc) then
         if (fermi_n == 0) then
@@ -193,57 +206,65 @@ contains
 
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  num_valence_bands, effective_model, have_disentangled, seedname, stdout, timer, &
-                  error, comm)
+                  num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                  stdout, timer, error, comm)
     if (allocated(error)) return
 
     if (plot_curv .or. plot_morb) then
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, &
-                    error, comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      end if
       if (allocated(error)) return
 
-    endif
+    end if
     if (plot_morb) then
 
-      call get_BB_R(dis_manifold, kmesh_info, kpt_latt, print_output, BB_R, v_matrix, eigval, &
-                    scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
+      call get_BB_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, HH_R, BB_R, v_matrix, &
+                    eigval, scissors_shift, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
                     num_wann, have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
 
-      call get_CC_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, CC_R, &
-                    v_matrix, eigval, scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, &
-                    num_bands, num_kpts, num_wann, have_disentangled, seedname, stdout, timer, &
-                    error, comm)
+      call get_CC_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
+                    HH_R, BB_R, CC_R, v_matrix, eigval, scissors_shift, wigner_seitz, ws_distance, &
+                    ws_region, num_bands, num_kpts, num_wann, have_disentangled, seedname, stdout, &
+                    timer, error, comm)
       if (allocated(error)) return
 
-    endif
+    end if
 
     if (plot_shc .or. (plot_bands .and. pw90_kpath%bands_colour == 'shc')) then
 
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      end if
       if (allocated(error)) return
 
       call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, eigval, &
-                    wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                    wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                     have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
 
       call get_SHC_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
                      pw90_spin_hall, SH_R, SHR_R, SR_R, v_matrix, eigval, scissors_shift, &
-                     wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                     wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                      num_valence_bands, have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
 
-    endif
+    end if
 
     if (plot_bands .and. pw90_kpath%bands_colour == 'spin') then
       call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, eigval, &
-                    wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                    wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                     have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
 
@@ -442,8 +463,7 @@ contains
         ! directly in the pwscf input file (the '1.0_dp' in the second column is
         ! a k-point weight, expected by pwscf)
         !
-        dataunit = io_file_unit()
-        open (dataunit, file=trim(seedname)//'-path.kpt', form='formatted')
+        open (newunit=dataunit, file=trim(seedname)//'-path.kpt', form='formatted')
         write (dataunit, *) total_pts
         do loop_kpt = 1, total_pts
           write (dataunit, '(3f12.6,3x,f4.1)') &
@@ -482,10 +502,9 @@ contains
         !
         ! Data file
         !
-        dataunit = io_file_unit()
         file_name = trim(seedname)//'-bands.dat'
         write (stdout, '(/,3x,a)') file_name
-        open (dataunit, file=file_name, form='formatted')
+        open (newunit=dataunit, file=file_name, form='formatted')
         do i = 1, num_wann
           do loop_kpt = 1, total_pts
             if (pw90_kpath%bands_colour == 'none') then
@@ -507,10 +526,9 @@ contains
         !
         ymin = minval(eig) - 1.0_dp
         ymax = maxval(eig) + 1.0_dp
-        gnuunit = io_file_unit()
         file_name = trim(seedname)//'-bands.gnu'
         write (stdout, '(/,3x,a)') file_name
-        open (gnuunit, file=file_name, form='formatted')
+        open (newunit=gnuunit, file=file_name, form='formatted')
         do i = 1, num_paths - 1
           write (gnuunit, 705) sum(kpath_len(1:i)), ymin, &
             sum(kpath_len(1:i)), ymax
@@ -561,10 +579,9 @@ contains
         !
         ! python script
         !
-        pyunit = io_file_unit()
         file_name = trim(seedname)//'-bands.py'
         write (stdout, '(/,3x,a)') file_name
-        open (pyunit, file=file_name, form='formatted')
+        open (newunit=pyunit, file=file_name, form='formatted')
         write (pyunit, '(a)') 'import pylab as pl'
         write (pyunit, '(a)') 'import numpy as np'
         write (pyunit, '(a)') "data = np.loadtxt('"//trim(seedname)// &
@@ -622,10 +639,9 @@ contains
       if (plot_curv) then
         ! It is conventional to plot the negative curvature
         curv = -curv
-        dataunit = io_file_unit()
         file_name = trim(seedname)//'-curv.dat'
         write (stdout, '(/,3x,a)') file_name
-        open (dataunit, file=file_name, form='formatted')
+        open (newunit=dataunit, file=file_name, form='formatted')
         do loop_kpt = 1, total_pts
           write (dataunit, '(4E16.8)') xval(loop_kpt), &
             curv(loop_kpt, :)
@@ -640,10 +656,9 @@ contains
           !
           ! gnuplot script
           !
-          gnuunit = io_file_unit()
           file_name = trim(seedname)//'-curv_'//achar(119 + i)//'.gnu'
           write (stdout, '(/,3x,a)') file_name
-          open (gnuunit, file=file_name, form='formatted')
+          open (newunit=gnuunit, file=file_name, form='formatted')
           ymin = minval(curv(:, i))
           ymax = maxval(curv(:, i))
           range = ymax - ymin
@@ -663,10 +678,9 @@ contains
           !
           ! python script
           !
-          pyunit = io_file_unit()
           file_name = trim(seedname)//'-curv_'//achar(119 + i)//'.py'
           write (stdout, '(/,3x,a)') file_name
-          open (pyunit, file=file_name, form='formatted')
+          open (newunit=pyunit, file=file_name, form='formatted')
           write (pyunit, '(a)') 'import pylab as pl'
           write (pyunit, '(a)') 'import numpy as np'
           write (pyunit, '(a)') "data = np.loadtxt('"//trim(seedname)// &
@@ -714,10 +728,9 @@ contains
       end if ! plot_curv .and. .not.plot_bands
 
       if (plot_morb) then
-        dataunit = io_file_unit()
         file_name = trim(seedname)//'-morb.dat'
         write (stdout, '(/,3x,a)') file_name
-        open (dataunit, file=file_name, form='formatted')
+        open (newunit=dataunit, file=file_name, form='formatted')
         do loop_kpt = 1, total_pts
           write (dataunit, '(4E16.8)') xval(loop_kpt), morb(loop_kpt, :)
         end do
@@ -730,10 +743,9 @@ contains
           !
           ! gnuplot script
           !
-          gnuunit = io_file_unit()
           file_name = trim(seedname)//'-morb_'//achar(119 + i)//'.gnu'
           write (stdout, '(/,3x,a)') file_name
-          open (gnuunit, file=file_name, form='formatted')
+          open (newunit=gnuunit, file=file_name, form='formatted')
           ymin = minval(morb(:, i))
           ymax = maxval(morb(:, i))
           range = ymax - ymin
@@ -753,10 +765,9 @@ contains
           !
           ! python script
           !
-          pyunit = io_file_unit()
           file_name = trim(seedname)//'-morb_'//achar(119 + i)//'.py'
           write (stdout, '(/,3x,a)') file_name
-          open (pyunit, file=file_name, form='formatted')
+          open (newunit=pyunit, file=file_name, form='formatted')
           write (pyunit, '(a)') 'import pylab as pl'
           write (pyunit, '(a)') 'import numpy as np'
           write (pyunit, '(a)') "data = np.loadtxt('"//trim(seedname)// &
@@ -799,10 +810,9 @@ contains
       end if ! plot_morb .and. .not.plot_bands
 
       if (plot_shc) then
-        dataunit = io_file_unit()
         file_name = trim(seedname)//'-shc.dat'
         write (stdout, '(/,3x,a)') file_name
-        open (dataunit, file=file_name, form='formatted')
+        open (newunit=dataunit, file=file_name, form='formatted')
         do loop_kpt = 1, total_pts
           write (dataunit, '(2E16.8)') xval(loop_kpt), &
             shc(loop_kpt)
@@ -815,10 +825,9 @@ contains
         !
         ! gnuplot script
         !
-        gnuunit = io_file_unit()
         file_name = trim(seedname)//'-shc'//'.gnu'
         write (stdout, '(/,3x,a)') file_name
-        open (gnuunit, file=file_name, form='formatted')
+        open (newunit=gnuunit, file=file_name, form='formatted')
         ymin = minval(shc(:))
         ymax = maxval(shc(:))
         range = ymax - ymin
@@ -838,10 +847,9 @@ contains
         !
         ! python script
         !
-        pyunit = io_file_unit()
         file_name = trim(seedname)//'-shc'//'.py'
         write (stdout, '(/,3x,a)') file_name
-        open (pyunit, file=file_name, form='formatted')
+        open (newunit=pyunit, file=file_name, form='formatted')
         write (pyunit, '(a)') "# uncomment these two lines if you are " &
           //"running in non-GUI environment"
         write (pyunit, '(a)') "#import matplotlib"
@@ -899,10 +907,9 @@ contains
         !
         ! python script
         !
-        pyunit = io_file_unit()
         file_name = trim(seedname)//'-bands+shc'//'.py'
         write (stdout, '(/,3x,a)') file_name
-        open (pyunit, file=file_name, form='formatted')
+        open (newunit=pyunit, file=file_name, form='formatted')
         write (pyunit, '(a)') "# uncomment these two lines if you are " &
           //"running in non-GUI environment"
         write (pyunit, '(a)') "#import matplotlib"
@@ -1017,14 +1024,13 @@ contains
         ! python script
         !
         do i = 1, 3
-          pyunit = io_file_unit()
           if (plot_curv) then
             file_name = trim(seedname)//'-bands+curv_'//achar(119 + i)//'.py'
           else if (plot_morb) then
             file_name = trim(seedname)//'-bands+morb_'//achar(119 + i)//'.py'
           end if
           write (stdout, '(/,3x,a)') file_name
-          open (pyunit, file=file_name, form='formatted')
+          open (newunit=pyunit, file=file_name, form='formatted')
           write (pyunit, '(a)') 'import pylab as pl'
           write (pyunit, '(a)') 'import numpy as np'
           write (pyunit, '(a)') 'from matplotlib.gridspec import GridSpec'
@@ -1145,12 +1151,12 @@ contains
     !================================================!
 
     use w90_postw90_types, only: pw90_kpath_mod_type
-    use w90_comms, only: w90comm_type, mpirank
+    use w90_comms, only: w90_comm_type, mpirank
 
     ! arguments
     real(kind=dp), allocatable, intent(in) :: fermi_energy_list(:)
     type(pw90_kpath_mod_type), intent(in) :: pw90_kpath
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
     integer, intent(in) :: stdout
     character(len=*), intent(in) :: berry_curv_unit
@@ -1184,11 +1190,11 @@ contains
           write (stdout, '(/,3x,a)') '* Negative Berry curvature in Ang^2'
         else if (berry_curv_unit == 'bohr2') then
           write (stdout, '(/,3x,a)') '* Negative Berry curvature in Bohr^2'
-        endif
+        end if
         if (fermi_n /= 1) then
           call set_error_input(error, 'Must specify one Fermi level when kpath_task=curv', comm)
           return
-        endif
+        end if
       end if
       if (plot_morb) then
         write (stdout, '(/,3x,a)') &
@@ -1196,7 +1202,7 @@ contains
         if (fermi_n /= 1) then
           call set_error_input(error, 'Must specify one Fermi level when kpath_task=morb', comm)
           return
-        endif
+        end if
       end if
       if (plot_shc) then
         if (berry_curv_unit == 'ang2') then
@@ -1209,7 +1215,7 @@ contains
         if (fermi_n /= 1) then
           call set_error_input(error, 'Must specify one Fermi level when kpath_task=shc', comm)
           return
-        endif
+        end if
       end if
     end if ! on_root
 
@@ -1251,7 +1257,7 @@ contains
       num_paths = size(kpoint_path%labels)/2
     else
       num_paths = 0
-    endif
+    end if
     allocate (kpath_pts(num_paths))
     allocate (kpath_len(num_paths))
     do loop_path = 1, num_paths

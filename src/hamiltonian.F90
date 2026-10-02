@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_hamiltonian: Hamiltonian in Wannier basis             !
@@ -30,9 +43,9 @@ module w90_hamiltonian
 
   public :: hamiltonian_dealloc
   public :: hamiltonian_get_hr
+  public :: hamiltonian_get_rmn
   public :: hamiltonian_setup
   public :: hamiltonian_write_hr
-  public :: hamiltonian_write_rmn
   public :: hamiltonian_write_tb
 
 contains
@@ -62,7 +75,7 @@ contains
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(in) :: mp_grid(3)
     integer, intent(inout), allocatable :: irvec(:, :)
@@ -106,28 +119,28 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating irvec in hamiltonian_setup', comm)
       return
-    endif
+    end if
     irvec = 0
 
     allocate (ndegen(nrpts), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating ndegen in hamiltonian_setup', comm)
       return
-    endif
+    end if
     ndegen = 0
 
     allocate (ham_r(num_wann, num_wann, nrpts), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating ham_r in hamiltonian_setup', comm)
       return
-    endif
+    end if
     ham_r = cmplx_0
 
     allocate (ham_k(num_wann, num_wann, num_kpts), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating ham_k in hamiltonian_setup', comm)
       return
-    endif
+    end if
     ham_k = cmplx_0
     !
     ! Set up the wigner_seitz vectors
@@ -140,7 +153,7 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error allocating wannier_centres_translated in hamiltonian_setup', comm)
       return
-    endif
+    end if
 
     wannier_centres_translated = 0.0_dp
     ham_logical%ham_have_setup = .true.
@@ -164,7 +177,7 @@ contains
     ! arguments
     type(ham_logical_type), intent(inout) :: ham_logical
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(inout), allocatable :: ndegen(:)
     integer, intent(inout), allocatable :: irvec(:, :)
@@ -182,35 +195,35 @@ contains
       if (ierr /= 0) then
         call set_error_dealloc(error, 'Error in deallocating ham_r in hamiltonian_dealloc', comm)
         return
-      endif
+      end if
     end if
     if (allocated(ham_k)) then
       deallocate (ham_k, stat=ierr)
       if (ierr /= 0) then
         call set_error_dealloc(error, 'Error in deallocating ham_k in hamiltonian_dealloc', comm)
         return
-      endif
+      end if
     end if
     if (allocated(irvec)) then
       deallocate (irvec, stat=ierr)
       if (ierr /= 0) then
         call set_error_dealloc(error, 'Error in deallocating irvec in hamiltonian_dealloc', comm)
         return
-      endif
+      end if
     end if
     if (allocated(ndegen)) then
       deallocate (ndegen, stat=ierr)
       if (ierr /= 0) then
         call set_error_dealloc(error, 'Error in deallocating ndegen in hamiltonian_dealloc', comm)
         return
-      endif
+      end if
     end if
     if (allocated(wannier_centres_translated)) then
       deallocate (wannier_centres_translated, stat=ierr)
       if (ierr /= 0) then
-        call set_error_dealloc(error, 'Error in deallocating wannier_centres_translated in w90_readwrite_dealloc', comm)
+        call set_error_dealloc(error, 'Error in deallocating wannier_centres_translated in hamiltonian_dealloc', comm)
         return
-      endif
+      end if
     end if
 
     ham_logical%ham_have_setup = .false.
@@ -218,10 +231,6 @@ contains
     ham_logical%use_translation = .false.
     ham_logical%have_ham_r = .false.
     ham_logical%have_ham_k = .false.
-    ham_logical%hr_written = .false.
-    ham_logical%tb_written = .false.
-
-    return
     !================================================!
   end subroutine hamiltonian_dealloc
 
@@ -252,7 +261,7 @@ contains
     type(print_output_type), intent(in)      :: print_output
     type(dis_manifold_type), intent(in)      :: dis_manifold
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in)           :: comm
+    type(w90_comm_type), intent(in)           :: comm
     type(timer_list_type), intent(inout)     :: timer
 
     integer, intent(inout), allocatable :: shift_vec(:, :)
@@ -280,10 +289,10 @@ contains
     ! local variables
     integer          :: loop_kpt, i, j, m, irpt, ierr, counter
     real(kind=dp)    :: rdotk
-    real(kind=dp)    :: eigval_opt(num_bands, num_kpts)
-    real(kind=dp)    :: eigval2(num_wann, num_kpts)
+    real(kind=dp), allocatable    :: eigval_opt(:, :) !(num_bands, num_kpts)
+    real(kind=dp), allocatable    :: eigval2(:, :)    !(num_wann, num_kpts)
     real(kind=dp)    :: irvec_tmp(3)
-    complex(kind=dp) :: utmp(num_bands, num_wann)
+    complex(kind=dp), allocatable :: utmp(:, :)       !(num_bands, num_wann)
     complex(kind=dp) :: fac
 
     if (print_output%timing_level > 1) call io_stopwatch_start('hamiltonian: get_hr', timer)
@@ -293,16 +302,38 @@ contains
         goto 200
       else
         goto 100
-      endif
+      end if
     end if
 
     if (ham_logical%have_ham_k) go to 100
 
     ham_k = cmplx_0
-    eigval_opt = 0.0_dp
+
+    allocate (eigval2(num_wann, num_kpts), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating eigval2 in hamiltonian_get_hr', comm)
+      return
+    end if
+
     eigval2 = 0.0_dp
 
     if (have_disentangled) then
+
+      ! start allocation of eigval_opt, utmp; used only if have_disentangled.
+      allocate (eigval_opt(num_bands, num_kpts), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating eigval_opt in hamiltonian_get_hr', comm)
+        return
+      end if
+
+      allocate (utmp(num_bands, num_wann), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating utmp in hamiltonian_get_hr', comm)
+        return
+      end if
+
+      eigval_opt = 0.0_dp
+      ! end allocation of eigval_opt, utmp
 
       ! slim down eigval to contain states within the outer window
 
@@ -328,9 +359,9 @@ contains
               eigval2(j, loop_kpt) = eigval2(j, loop_kpt) + eigval_opt(m, loop_kpt)* &
                                      real(conjg(u_matrix_opt(m, j, loop_kpt))* &
                                           u_matrix_opt(m, j, loop_kpt), dp)
-            enddo
-          enddo
-        enddo
+            end do
+          end do
+        end do
       else
         ! u_matrix_opt are not the eigenvectors of the Hamiltonian any more
         ! so we have to calculate ham_k in the following way
@@ -343,12 +374,12 @@ contains
               do m = 1, dis_manifold%ndimwin(loop_kpt)
                 ham_k(i, j, loop_kpt) = ham_k(i, j, loop_kpt) + eigval_opt(m, loop_kpt)* &
                                         conjg(utmp(m, i))*utmp(m, j)
-              enddo
+              end do
               if (i .lt. j) ham_k(j, i, loop_kpt) = conjg(ham_k(i, j, loop_kpt))
-            enddo
-          enddo
-        enddo
-      endif
+            end do
+          end do
+        end do
+      end if
 
     else
       eigval2(1:num_wann, :) = eigval(1:num_wann, :)
@@ -367,12 +398,12 @@ contains
             do m = 1, num_wann
               ham_k(i, j, loop_kpt) = ham_k(i, j, loop_kpt) + eigval2(m, loop_kpt)* &
                                       conjg(u_matrix(m, i, loop_kpt))*u_matrix(m, j, loop_kpt)
-            enddo
+            end do
             if (i .lt. j) ham_k(j, i, loop_kpt) = conjg(ham_k(i, j, loop_kpt))
-          enddo
-        enddo
-      enddo
-    endif
+          end do
+        end do
+      end do
+    end if
 
     ham_logical%have_ham_k = .true.
 
@@ -394,8 +425,8 @@ contains
           rdotk = twopi*dot_product(kpt_latt(:, loop_kpt), real(irvec(:, irpt), dp))
           fac = exp(-cmplx_i*rdotk)/real(num_kpts, dp)
           ham_r(:, :, irpt) = ham_r(:, :, irpt) + fac*ham_k(:, :, loop_kpt)
-        enddo
-      enddo
+        end do
+      end do
 
       ham_logical%have_translated = .false.
 
@@ -405,7 +436,7 @@ contains
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error in allocating shift_vec in hamiltonian_get_hr', comm)
         return
-      endif
+      end if
       call internal_translate_centres(atom_data, real_space_ham, real_lattice, wannier_centres, &
                                       wannier_centres_translated, shift_vec, print_output%iprint, &
                                       num_wann, error)
@@ -423,8 +454,8 @@ contains
               ham_r(j, i, irpt) = ham_r(j, i, irpt) + fac*ham_k(j, i, loop_kpt)
             end do
           end do
-        enddo
-      enddo
+        end do
+      end do
 
       ham_logical%have_translated = .true.
 
@@ -449,7 +480,31 @@ contains
       if (ierr /= 0) then
         call set_error_dealloc(error, 'Error in deallocating shift_vec in hamiltonian_get_hr', comm)
         return
-      endif
+      end if
+    end if
+
+    if (allocated(eigval2)) then
+      deallocate (eigval2, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating eigval2 in hamiltonian_get_hr', comm)
+        return
+      end if
+    end if
+
+    if (allocated(eigval_opt)) then
+      deallocate (eigval_opt, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating eigval_opt in hamiltonian_get_hr', comm)
+        return
+      end if
+    end if
+
+    if (allocated(utmp)) then
+      deallocate (utmp, stat=ierr)
+      if (ierr /= 0) then
+        call set_error_dealloc(error, 'Error in deallocating utmp in hamiltonian_get_hr', comm)
+        return
+      end if
     end if
 
     if (print_output%timing_level > 1) call io_stopwatch_stop('hamiltonian: get_hr', timer)
@@ -504,12 +559,12 @@ contains
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error in allocating r_home in internal_translate_centres', comm)
         return
-      endif
+      end if
       allocate (r_frac(3, num_wann), stat=ierr)
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error in allocating r_frac in internal_translate_centres', comm)
         return
-      endif
+      end if
       r_home = 0.0_dp; r_frac = 0.0_dp
 
       call utility_inverse_mat(real_lattice, inv_lattice)
@@ -519,8 +574,8 @@ contains
         do nsp = 1, atom_data%num_species
           do nat = 1, atom_data%species_num(nsp)
             c_pos_cart(:) = c_pos_cart(:) + atom_data%pos_cart(:, nat, nsp)
-          enddo
-        enddo
+          end do
+        end do
         c_pos_cart = c_pos_cart/atom_data%num_atoms
         ! Cartesian --> fractional
         call utility_cart_to_frac(c_pos_cart, real_space_ham%translation_centre_frac, inv_lattice)
@@ -551,19 +606,19 @@ contains
         end do
         write (stdout, '(1x,a78)') repeat('-', 78)
         write (stdout, *)
-      endif
+      end if
       wannier_centres_translated = r_home
 
       deallocate (r_frac, stat=ierr)
       if (ierr /= 0) then
         call set_error_dealloc(error, 'Error in deallocating r_frac in internal_translate_centres', comm)
         return
-      endif
+      end if
       deallocate (r_home, stat=ierr)
       if (ierr /= 0) then
         call set_error_dealloc(error, 'Error in deallocating r_home in internal_translate_centres', comm)
         return
-      endif
+      end if
 
       return
 
@@ -574,46 +629,48 @@ contains
   end subroutine hamiltonian_get_hr
 
   !================================================!
-  subroutine hamiltonian_write_hr(ham_logical, ham_r, irvec, ndegen, nrpts, num_wann, &
-                                  timing_level, seedname, timer, error, comm)
+  subroutine hamiltonian_write_hr(ham_r, irvec, ndegen, nrpts, num_wann, timing_level, seedname, &
+                                  timer, error, comm)
     !================================================!
     !
     !!  Write the Hamiltonian in the WF basis
     !
     !================================================!
 
-    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_file_unit, io_date
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_date
     use w90_types, only: timer_list_type
-    use w90_wannier90_types, only: ham_logical_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
-    type(ham_logical_type), intent(inout) :: ham_logical
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
-    integer, intent(inout) :: nrpts
-    integer, intent(in)    :: ndegen(:)
-    integer, intent(inout) :: irvec(:, :)
-    integer, intent(in)    :: num_wann
-    integer, intent(in)    :: timing_level
+    integer, intent(in) :: irvec(:, :)
+    integer, intent(in) :: ndegen(:)
+    integer, intent(in) :: nrpts
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: timing_level
+
     complex(kind=dp), intent(in) :: ham_r(:, :, :)
-    character(len=50), intent(in)  :: seedname
+
+    character(len=50), intent(in) :: seedname
 
     ! local variables
-    integer            :: i, j, irpt, file_unit
+    integer :: i, j, irpt, file_unit, ierr
     character(len=33) :: header
-    character(len=9)  :: cdate, ctime
-
-    if (ham_logical%hr_written) return
+    character(len=9) :: cdate, ctime
 
     if (timing_level > 1) call io_stopwatch_start('hamiltonian: write_hr', timer)
 
     ! write the  whole matrix with all the indices
 
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_hr.dat', form='formatted', &
-          status='unknown', err=101)
+    open (newunit=file_unit, file=trim(seedname)//'_hr.dat', form='formatted', status='unknown', &
+          iostat=ierr)
+    if (ierr /= 0) then
+      call set_error_file(error, 'Error: hamiltonian_write_hr: problem opening file '//trim(seedname)//'_hr.dat', comm)
+      return
+    end if
 
     call io_date(cdate, ctime)
     header = 'written on '//cdate//' at '//ctime
@@ -632,16 +689,7 @@ contains
     end do
 
     close (file_unit)
-
-    ham_logical%hr_written = .true.
-
     if (timing_level > 1) call io_stopwatch_stop('hamiltonian: write_hr', timer)
-
-    return
-
-101 call set_error_file(error, 'Error: hamiltonian_write_hr: problem opening file '//trim(seedname)//'_hr.dat', comm)
-    return !fixme jj restructure
-
   end subroutine hamiltonian_write_hr
 
   !================================================!
@@ -671,7 +719,7 @@ contains
     type(print_output_type), intent(in) :: print_output
     type(timer_list_type), intent(inout) :: timer
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(inout)              :: nrpts
     integer, intent(inout), allocatable :: ndegen(:)
@@ -703,7 +751,7 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating dist in hamiltonian_wigner_seitz', comm)
       return
-    endif
+    end if
 
     ! The Wannier functions live in a supercell of the real space unit cell
     ! this supercell is mp_grid unit cells long in each direction
@@ -743,11 +791,11 @@ contains
                   do j = 1, 3
                     dist(icnt) = dist(icnt) + real(ndiff(i), dp)*real_metric(i, j) &
                                  *real(ndiff(j), dp)
-                  enddo
-                enddo
-              enddo
-            enddo
-          enddo
+                  end do
+                end do
+              end do
+            end do
+          end do
           ! AAM: On first pass, we reference unallocated variables (ndegen,irvec)
           dist_min = minval(dist)
           if (abs(dist((dist_dim + 1)/2) - dist_min) .lt. ws_region%ws_distance_tol**2) then
@@ -764,21 +812,21 @@ contains
               !
               ! Record index of r=0
               if (n1 == 0 .and. n2 == 0 .and. n3 == 0) rpt_origin = nrpts
-            endif
+            end if
           end if
 
           !n3
-        enddo
+        end do
         !n2
-      enddo
+      end do
       !n1
-    enddo
+    end do
     !
     deallocate (dist, stat=ierr)
     if (ierr /= 0) then
       call set_error_dealloc(error, 'Error in deallocating dist hamiltonian_wigner_seitz', comm)
       return
-    endif
+    end if
     if (count_pts) then
       if (print_output%timing_level > 1) &
         call io_stopwatch_stop('hamiltonian: wigner_seitz', timer)
@@ -789,21 +837,21 @@ contains
     tot = 0.0_dp
     do i = 1, nrpts
       tot = tot + 1.0_dp/real(ndegen(i), dp)
-    enddo
+    end do
 
     if (print_output%iprint >= 3) then
       write (stdout, '(1x,i4,a,/)') nrpts, ' lattice points in Wigner-Seitz supercell:'
       do i = 1, nrpts
         write (stdout, '(4x,a,3(i3,1x),a,i2)') '  vector ', irvec(1, i), irvec(2, i), &
           irvec(3, i), '  degeneracy: ', ndegen(i)
-      enddo
+      end do
       write (stdout, '(1x,a,f12.3)') ' tot = ', tot
       write (stdout, '(1x,a,i12)') ' mp_grid product = ', mp_grid(1)*mp_grid(2)*mp_grid(3)
-    endif
+    end if
     if (abs(tot - real(mp_grid(1)*mp_grid(2)*mp_grid(3), dp)) > eps8) then
       call set_error_fatal(error, 'ERROR in hamiltonian_wigner_seitz: error in finding Wigner-Seitz points', comm)
       return
-    endif
+    end if
 
     if (print_output%timing_level > 1) call io_stopwatch_stop('hamiltonian: wigner_seitz', timer)
 
@@ -812,93 +860,260 @@ contains
   end subroutine hamiltonian_wigner_seitz
 
   !================================================!
-  subroutine hamiltonian_write_rmn(kmesh_info, m_matrix, kpt_latt, irvec, nrpts, num_kpts, &
-                                   num_wann, seedname, error, comm)
+  subroutine hamiltonian_get_rmn(kmesh_info, ws_distance, m_matrix, kpt_latt, real_lattice, &
+                                 wannier_centres, irvec, crvec_full, ndegen, nrpts, nrpts_full, &
+                                 rpt_origin, ir_origin, ir_map, use_ws_distance, transl_inv_full, &
+                                 write_ndegen_applied, num_kpts, num_wann, dist_k, pos_r, error, &
+                                 comm)
     !================================================!
-    !
-    !! Write out the matrix elements of r
-    !
+    !! Position matrix elements <0i|r|Rj> in the Wannier basis, shared by the
+    !! seedname_r.dat and seedname_tb.dat writers.
+    !!
+    !! With write_ndegen_applied the result is returned on the expanded lattice
+    !! vector list of ws_expand_rvec, with the degeneracy weights already divided
+    !! out, so that it interpolates with a plain sum over exp(i k.R). Otherwise it
+    !! is returned on the folded list irvec and the weights are left to the reader.
+    !! rpt_origin and ir_origin index R = 0 in the folded and the expanded list.
+    !!
+    !! With transl_inv_full the translation-equivariant formula of get_AA_R is
+    !! used: the overlaps carry the phase exp(i b.(r_i + r_j)/2) in k space and
+    !! exp(-i b.R/2) in real space. The latter has to be evaluated at the final
+    !! lattice vector, which is why the expanded case transforms one b vector at
+    !! a time instead of summing over b first.
+    !!
+    !! pos_r is reduced onto the root process and is meaningful only there. It is
+    !! also the reduction buffer, so it is allocated on every rank.
     !================================================!
 
-    use w90_constants, only: twopi, cmplx_i
-    use w90_io, only: io_file_unit, io_date
-    use w90_types, only: kmesh_info_type
+    use w90_constants, only: cmplx_0, cmplx_i, twopi
+    use w90_types, only: kmesh_info_type, ws_distance_type
+    use w90_ws_distance, only: ws_apply_ndegen
 
     implicit none
 
     ! arguments
     type(kmesh_info_type), intent(in) :: kmesh_info
+    type(ws_distance_type), intent(in) :: ws_distance
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
-    integer, intent(inout) :: nrpts
-    integer, intent(inout) :: irvec(:, :)
-    integer, intent(in)    :: num_wann
-    integer, intent(in)    :: num_kpts
-    real(kind=dp), intent(in)      :: kpt_latt(:, :)
-    complex(kind=dp), intent(in)   :: m_matrix(:, :, :, :)
-    character(len=50), intent(in)  :: seedname
+    integer, intent(in) :: num_kpts
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: nrpts
+    integer, intent(in) :: nrpts_full
+    integer, intent(in) :: rpt_origin
+    integer, intent(in) :: ir_origin
+    integer, intent(in) :: irvec(:, :)
+    integer, intent(in) :: ndegen(:)
+    integer, intent(in) :: dist_k(:) ! MPI k-point distribution
+    integer, intent(in) :: ir_map(:, :, :, :)
+
+    real(kind=dp), intent(in) :: kpt_latt(:, :)
+    real(kind=dp), intent(in) :: real_lattice(3, 3)
+    real(kind=dp), intent(in) :: wannier_centres(3, num_wann)
+    real(kind=dp), intent(in) :: crvec_full(:, :)
+
+    logical, intent(in) :: use_ws_distance
+    logical, intent(in) :: transl_inv_full
+    logical, intent(in) :: write_ndegen_applied
+
+    complex(kind=dp), intent(in) :: m_matrix(:, :, :, :)
+    complex(kind=dp), intent(out) :: pos_r(:, :, :, :)
+    !! (num_wann, num_wann, nrpts_full if write_ndegen_applied else nrpts, 3)
 
     ! local variables
-    integer :: loop_rpt, m, n, nkp, ind, nn, file_unit
-    real(kind=dp) :: rdotk
-    complex(kind=dp) :: fac
-    complex(kind=dp) :: position(3)
-    character(len=33) :: header
-    character(len=9)  :: cdate, ctime
+    integer :: i, idir, ik, ik_rank, ir, ir0, ierr, nn, nno, rank
+    real(kind=dp) :: bvec(3)
+    complex(kind=dp), allocatable :: contrib(:, :, :), mel(:, :), op_folded(:, :, :, :), &
+                                     op_full(:, :, :)
+    logical :: on_root
 
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_r.dat', form='formatted', status='unknown', err=101)
-    call io_date(cdate, ctime)
+    rank = mpirank(comm)
+    on_root = (rank == 0)
 
-    header = 'written on '//cdate//' at '//ctime
-    write (file_unit, *) header ! Date and time
-    write (file_unit, *) num_wann
-    write (file_unit, *) nrpts
+    if (transl_inv_full .and. write_ndegen_applied .and. .not. allocated(kmesh_info%nnord)) then
+      call set_error_input(error, 'transl_inv_full with write_ndegen_applied needs the '// &
+                           'b-vector ordering kmesh_info%nnord, which is not allocated', comm)
+      return
+    end if
 
-    do loop_rpt = 1, nrpts
-      do m = 1, num_wann
-        do n = 1, num_wann
-          position(:) = 0._dp
-          do nkp = 1, num_kpts
-            rdotk = twopi*dot_product(kpt_latt(:, nkp), real(irvec(:, loop_rpt), dp))
-            fac = exp(-cmplx_i*rdotk)/real(num_kpts, dp)
-            do ind = 1, 3
-              do nn = 1, kmesh_info%nntot
-                if (m .eq. n) then
-                  ! For loop_rpt==rpt_origin, this reduces to
-                  ! Eq.(32) of Marzari and Vanderbilt PRB 56,
-                  ! 12847 (1997). Otherwise, is is Eq.(44)
-                  ! Wang, Yates, Souza and Vanderbilt PRB 74,
-                  ! 195118 (2006), modified according to
-                  ! Eqs.(27,29) of Marzari and Vanderbilt
-                  position(ind) = position(ind) - kmesh_info%wb(nn)*kmesh_info%bk(ind, nn, nkp) &
-                                  *aimag(log(m_matrix(n, m, nn, nkp)))*fac
-                else
-                  ! Eq.(44) Wang, Yates, Souza and Vanderbilt PRB 74, 195118 (2006)
-                  position(ind) = position(ind) + cmplx_i*kmesh_info%wb(nn) &
-                                  *kmesh_info%bk(ind, nn, nkp)*m_matrix(n, m, nn, nkp)*fac
-                endif
+    allocate (contrib(num_wann, num_wann, 3), mel(num_wann, num_wann), stat=ierr)
+    if (ierr /= 0) then
+      call set_error_alloc(error, 'Error in allocating contrib in hamiltonian_get_rmn', comm)
+      return
+    end if
+    if (write_ndegen_applied) then
+      allocate (op_folded(num_wann, num_wann, nrpts, 3), &
+                op_full(num_wann, num_wann, nrpts_full), stat=ierr)
+      if (ierr /= 0) then
+        call set_error_alloc(error, 'Error in allocating op_folded in hamiltonian_get_rmn', comm)
+        return
+      end if
+    end if
+
+    pos_r = cmplx_0
+
+    if (transl_inv_full) then
+
+      if (write_ndegen_applied) then
+        ! One b vector at a time, so that exp(-i b.R/2) can be applied at the
+        ! expanded R. nno indexes the b vectors of the first k-point, and
+        ! kmesh_info%nnord(nno, ik) is the neighbour of ik carrying that same b.
+        do nno = 1, kmesh_info%nntot
+          op_folded = cmplx_0
+          ik_rank = 0
+          do ik = 1, num_kpts
+            if (dist_k(ik) /= rank) cycle
+            ik_rank = ik_rank + 1
+            nn = kmesh_info%nnord(nno, ik)
+            call accumulate_rmn(op_folded)
+          end do
+
+          call comms_reduce(op_folded(1, 1, 1, 1), num_wann*num_wann*nrpts*3, 'SUM', error, comm)
+          if (allocated(error)) return
+
+          if (on_root) then
+            bvec = kmesh_info%bk(:, nno, 1)
+            do idir = 1, 3
+              call ws_apply_ndegen(ws_distance, use_ws_distance, num_wann, nrpts, ndegen, &
+                                   nrpts_full, ir_map, op_folded(:, :, :, idir), op_full)
+              do ir = 1, nrpts_full
+                pos_r(:, :, ir, idir) = pos_r(:, :, ir, idir) + op_full(:, :, ir) &
+                                        *exp(-cmplx_i*0.5_dp*dot_product(bvec, crvec_full(:, ir)))
               end do
             end do
+          end if
+        end do
+
+      else
+        ! On the folded grid there is no Wigner-Seitz shift to account for, see
+        ! the input check in w90_wannier90_readwrite_read, so exp(-i b.R/2) can
+        ! be folded into the Fourier factor and all b summed at once.
+        ik_rank = 0
+        do ik = 1, num_kpts
+          if (dist_k(ik) /= rank) cycle
+          ik_rank = ik_rank + 1
+          do nn = 1, kmesh_info%nntot
+            call accumulate_rmn(pos_r)
           end do
-          write (file_unit, '(5I5,6F12.6)') irvec(:, loop_rpt), n, m, position(:)
+        end do
+
+        call comms_reduce(pos_r(1, 1, 1, 1), num_wann*num_wann*nrpts*3, 'SUM', error, comm)
+        if (allocated(error)) return
+      end if
+
+      ! <0i|r|0i> is the Wannier centre; the transl_inv_full formula does not
+      ! produce it, see get_AA_R.
+      if (on_root) then
+        ir0 = rpt_origin
+        if (write_ndegen_applied) ir0 = ir_origin
+        do i = 1, num_wann
+          pos_r(i, i, ir0, :) = cmplx(wannier_centres(:, i), 0.0_dp, kind=dp)
+        end do
+      end if
+
+    else
+
+      ! Sum over b on the folded grid, then divide out the degeneracy weights if
+      ! the output is to carry them.
+      if (write_ndegen_applied) op_folded = cmplx_0
+      ik_rank = 0
+      do ik = 1, num_kpts
+        if (dist_k(ik) /= rank) cycle
+        ik_rank = ik_rank + 1
+        do nn = 1, kmesh_info%nntot
+          if (write_ndegen_applied) then
+            call accumulate_rmn(op_folded)
+          else
+            call accumulate_rmn(pos_r)
+          end if
         end do
       end do
-    end do
 
-    close (file_unit)
+      if (write_ndegen_applied) then
+        call comms_reduce(op_folded(1, 1, 1, 1), num_wann*num_wann*nrpts*3, 'SUM', error, comm)
+        if (allocated(error)) return
+        if (on_root) then
+          do idir = 1, 3
+            call ws_apply_ndegen(ws_distance, use_ws_distance, num_wann, nrpts, ndegen, &
+                                 nrpts_full, ir_map, op_folded(:, :, :, idir), op_full)
+            pos_r(:, :, :, idir) = op_full(:, :, :)
+          end do
+        end if
+      else
+        call comms_reduce(pos_r(1, 1, 1, 1), num_wann*num_wann*nrpts*3, 'SUM', error, comm)
+        if (allocated(error)) return
+      end if
 
-    return
+    end if
 
-101 call set_error_file(error, 'Error: hamiltonian_write_rmn: problem opening file '//trim(seedname)//'_r', comm)
-    return !fixme jj restructure
+  contains
 
-  end subroutine hamiltonian_write_rmn
+    subroutine accumulate_rmn(acc)
+      !! Add the contribution of neighbour nn of k-point ik (host variables) to
+      !! the folded accumulator acc.
+
+      implicit none
+
+      complex(kind=dp), intent(inout) :: acc(:, :, :, :)
+
+      integer :: i, j, idir, ir
+      real(kind=dp) :: rdotk, wbk, rvec(3)
+      complex(kind=dp) :: fac
+      logical :: apply_r_phase
+
+      ! the real-space half of the transl_inv_full phase can only be folded in at
+      ! the unshifted R when the output stays on the folded grid
+      apply_r_phase = transl_inv_full .and. .not. write_ndegen_applied
+
+      if (transl_inv_full) then
+        ! k-space half of the get_AA_R phase, exp(i b.(r_i + r_j)/2). m_matrix may
+        ! be dimensioned on num_bands, so index its leading num_wann corner.
+        do j = 1, num_wann
+          do i = 1, num_wann
+            mel(i, j) = m_matrix(i, j, nn, ik_rank) &
+                        *exp(cmplx_i*dot_product(kmesh_info%bk(:, nn, ik), &
+                                                 0.5_dp*(wannier_centres(:, i) &
+                                                         + wannier_centres(:, j))))
+          end do
+        end do
+        do idir = 1, 3
+          contrib(:, :, idir) = cmplx_i*kmesh_info%wb(nn)*kmesh_info%bk(idir, nn, ik)*mel(:, :)
+        end do
+      else
+        mel(:, :) = m_matrix(1:num_wann, 1:num_wann, nn, ik_rank)
+        do idir = 1, 3
+          wbk = kmesh_info%wb(nn)*kmesh_info%bk(idir, nn, ik)
+          ! Eq.(44) Wang, Yates, Souza and Vanderbilt PRB 74, 195118 (2006)
+          contrib(:, :, idir) = cmplx_i*wbk*mel(:, :)
+          do i = 1, num_wann
+            ! For R==0 this reduces to Eq.(32) of Marzari and Vanderbilt PRB 56,
+            ! 12847 (1997); otherwise it is Eq.(44) of WYSV06, modified according
+            ! to Eqs.(27,29) of Marzari and Vanderbilt.
+            contrib(i, i, idir) = cmplx(-wbk*aimag(log(mel(i, i))), 0.0_dp, kind=dp)
+          end do
+        end do
+      end if
+
+      do ir = 1, nrpts
+        rvec = real(irvec(:, ir), dp)
+        rdotk = twopi*dot_product(kpt_latt(:, ik), rvec)
+        fac = exp(-cmplx_i*rdotk)/real(num_kpts, dp)
+        if (apply_r_phase) &
+          ! real-space half of the get_AA_R phase, exp(-i b.R/2)
+          fac = fac*exp(-cmplx_i*0.5_dp*dot_product(kmesh_info%bk(:, nn, ik), &
+                                                    matmul(rvec, real_lattice)))
+        do idir = 1, 3
+          acc(:, :, ir, idir) = acc(:, :, ir, idir) + contrib(:, :, idir)*fac
+        end do
+      end do
+
+    end subroutine accumulate_rmn
+
+  end subroutine hamiltonian_get_rmn
 
   !================================================!
-  subroutine hamiltonian_write_tb(ham_logical, kmesh_info, ham_r, m_matrix, kpt_latt, &
-                                  real_lattice, irvec, ndegen, nrpts, num_kpts, num_wann, &
+  subroutine hamiltonian_write_tb(ham_r, pos_r, real_lattice, irvec, ndegen, nrpts, num_wann, &
                                   timing_level, seedname, timer, error, comm)
     !================================================!
     !! Write in a single file all the information
@@ -909,47 +1124,40 @@ contains
     !! * <0n|r|Rn>
     !================================================!
 
-    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_file_unit, io_date
-    use w90_constants, only: twopi, cmplx_i
-    use w90_types, only: kmesh_info_type
-    use w90_wannier90_types, only: ham_logical_type
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop, io_date
 
     ! arguments
-    type(kmesh_info_type), intent(in) :: kmesh_info
-    type(ham_logical_type), intent(inout) :: ham_logical
     type(timer_list_type), intent(inout) :: timer
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
 
-    integer                :: i, j, irpt, ik, nn, idir, file_unit
-    integer, intent(in)    :: num_wann
-    integer, intent(in)    :: num_kpts
-    integer, intent(in)    :: timing_level
-    integer, intent(inout) :: nrpts
-    integer, intent(in)    :: ndegen(:)
-    integer, intent(inout) :: irvec(:, :)
+    integer, intent(in) :: ndegen(:)
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: irvec(:, :)
+    integer, intent(in) :: nrpts
+    integer, intent(in) :: timing_level
 
-    real(kind=dp), intent(in) :: kpt_latt(:, :)
     real(kind=dp), intent(in) :: real_lattice(3, 3)
 
     complex(kind=dp), intent(in) :: ham_r(:, :, :)
-    complex(kind=dp), intent(in) :: m_matrix(:, :, :, :)
+    complex(kind=dp), intent(in) :: pos_r(:, :, :, :)
 
     character(len=50), intent(in)  :: seedname
 
     ! local variables
-    real(kind=dp)      :: rdotk
-    complex(kind=dp)   :: fac, pos_r(3)
-    character(len=33)  :: header
-    character(len=9)   :: cdate, ctime
-
-    if (ham_logical%tb_written) return
+    integer :: ierr
+    integer :: i, j, irpt, file_unit
+    character(len=33) :: header
+    character(len=9) :: cdate, ctime
 
     if (timing_level > 1) call io_stopwatch_start('hamiltonian: write_tb', timer)
 
-    file_unit = io_file_unit()
-    open (file_unit, file=trim(seedname)//'_tb.dat', form='formatted', &
-          status='unknown', err=101)
+    open (newunit=file_unit, file=trim(seedname)//'_tb.dat', form='formatted', status='unknown', &
+          iostat=ierr)
+    if (ierr /= 0) then
+      call set_error_file(error, 'Error: hamiltonian_write_tb: problem opening file '//trim(seedname)//'_tb.dat', comm)
+      return
+    end if
 
     call io_date(cdate, ctime)
     header = 'written on '//cdate//' at '//ctime
@@ -983,45 +1191,12 @@ contains
       write (file_unit, '(/,3I5)') irvec(:, irpt)
       do i = 1, num_wann
         do j = 1, num_wann
-          pos_r(:) = 0._dp
-          do ik = 1, num_kpts
-            rdotk = twopi*dot_product(kpt_latt(:, ik), real(irvec(:, irpt), dp))
-            fac = exp(-cmplx_i*rdotk)/real(num_kpts, dp)
-            do idir = 1, 3
-              do nn = 1, kmesh_info%nntot
-                if (i == j) then
-                  ! For irpt==rpt_origin, this reduces to
-                  ! Eq.(32) of Marzari and Vanderbilt PRB 56,
-                  ! 12847 (1997). Otherwise, is is Eq.(44)
-                  ! Wang, Yates, Souza and Vanderbilt PRB 74,
-                  ! 195118 (2006), modified according to
-                  ! Eqs.(27,29) of Marzari and Vanderbilt
-                  pos_r(idir) = pos_r(idir) - kmesh_info%wb(nn)*kmesh_info%bk(idir, nn, ik) &
-                                *aimag(log(m_matrix(i, i, nn, ik)))*fac
-                else
-                  ! Eq.(44) Wang, Yates, Souza and Vanderbilt PRB 74, 195118 (2006)
-                  pos_r(idir) = pos_r(idir) + cmplx_i*kmesh_info%wb(nn) &
-                                *kmesh_info%bk(idir, nn, ik)*m_matrix(j, i, nn, ik)*fac
-                endif
-              end do
-            end do
-          end do
-          write (file_unit, '(2I5,3x,6(E15.8,1x))') j, i, pos_r(:)
+          write (file_unit, '(2I5,3x,6(E15.8,1x))') j, i, pos_r(j, i, irpt, :)
         end do
       end do
     end do
+
     close (file_unit)
-
-    ham_logical%tb_written = .true.
-
     if (timing_level > 1) call io_stopwatch_stop('hamiltonian: write_tb', timer)
-
-    return
-
-101 call set_error_file(error, 'Error: hamiltonian_write_tb: problem opening file ' &
-                        //trim(seedname)//'_tb.dat', comm)
-    return !jj fixme restructure
-
   end subroutine hamiltonian_write_tb
-
 end module w90_hamiltonian

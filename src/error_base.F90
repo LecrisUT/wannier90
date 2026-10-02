@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 
 module w90_error_base
@@ -22,18 +35,22 @@ module w90_error_base
   !! Codify error state with integer code and human readable string
   type w90_error_type
     integer :: code
-    character(len=256) :: message
+    character(len=128) :: message
+#ifdef W90DEV
   contains
     final :: untrapped_error
+#endif
   end type w90_error_type
 
   integer, parameter :: code_remote = -99 ! special code for error triggered by other mpi rank
+  integer, parameter :: code_deactivated = -888 ! special code for error triggered by other mpi rank
 
 contains
 
   subroutine untrapped_error(err)
     type(w90_error_type), intent(in) :: err
     ! this routine should never be called, so write to stderr and call "stop" in desparation
+    if (err%code == code_deactivated) return
     write (0, *) "UNTRAPPED ERROR: ", err%code
     write (0, *) "UNTRAPPED ERROR: ", err%message
     stop

@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  COMMS: set of MPI wrappers                                !
@@ -24,31 +37,33 @@ module w90_comms
   use w90_constants, only: dp
   use w90_error_base
 
-#ifdef MPI
-#  if !(defined(MPI08) || defined(MPI90) || defined(MPIH))
+#ifdef W90_MPI
+#  if !(defined(W90_MPI08) || defined(W90_MPI90) || defined(W90_MPIH))
 #    error "You need to define which MPI interface you are using"
 #  endif
+#else
+#define MPI_COMM_NULL -1
 #endif
 
-#ifdef MPI08
+#ifdef W90_MPI08
   use mpi_f08 ! use f08 interface if possible
 #endif
-#ifdef MPI90
+#ifdef W90_MPI90
   use mpi ! next best, use fortran90 interface
 #endif
 
   implicit none
 
-#ifdef MPIH
+#ifdef W90_MPIH
   include 'mpif.h' ! worst case, use legacy interface
 #endif
 
   private
 
-  integer, parameter :: code_mpi = 4
+  integer, parameter :: code_mpi = 4 ! this is duplicated here to avoid circular dependency with error.F90
 
-  integer, parameter :: mpi_send_tag = 77 !arbitrary
-  integer, parameter :: root_id = 0 !not arbitrary
+  integer, parameter :: mpi_send_tag = 77 ! arbitrary
+  integer, parameter :: root_id = 0 ! not arbitrary
 
   public :: comms_allreduce  ! reduce data onto all nodes
   public :: comms_array_split
@@ -61,7 +76,9 @@ module w90_comms
   !public :: comms_send       ! send data from one node to another
   public :: mpirank
   public :: mpisize
-  public :: comms_sync_err
+  public :: comms_sync_error
+  public :: valid_communicator
+  !! test whether communicator is initialised; returns true always for serial build
 
   ! versions without error synchronisation, use at own risk
   public :: comms_no_sync_allreduce  ! reduce data onto all nodes
@@ -73,18 +90,18 @@ module w90_comms
   public :: comms_no_sync_scatterv   ! sends chunks of an array to all nodes scattering them from the root node
   public :: comms_no_sync_send       ! send data from one node to another
 
-  type, public :: w90comm_type
-#ifdef MPI08
-    type(mpi_comm) :: comm ! f08 mpi interface
+  type, public :: w90_comm_type
+#ifdef W90_MPI08
+    type(mpi_comm) :: comm = MPI_COMM_NULL ! f08 mpi interface
 #else
-    integer :: comm ! f90 mpi or no mpi
+    integer :: comm = MPI_COMM_NULL ! f90 mpi or no mpi
 #endif
   end type
 
-  type, public :: w90stat_type
-#ifdef MPI08
+  type, private :: w90stat_type
+#ifdef W90_MPI08
     type(mpi_status) :: stat ! f08 mpi interface
-#elif MPI90
+#elif W90_MPI90
     integer :: stat(MPI_STATUS_SIZE)
 #else
     integer :: stat ! not used
@@ -150,6 +167,7 @@ module w90_comms
     module procedure comms_scatterv_real_2
     module procedure comms_scatterv_real_3
 !     module procedure comms_scatterv_cmplx
+    module procedure comms_scatterv_cmplx_3
     module procedure comms_scatterv_cmplx_4
   end interface comms_scatterv
 
@@ -214,16 +232,30 @@ module w90_comms
     module procedure comms_no_sync_scatterv_real_2
     module procedure comms_no_sync_scatterv_real_3
 !     module procedure comms_no_sync_scatterv_cmplx
+    module procedure comms_no_sync_scatterv_cmplx_3
     module procedure comms_no_sync_scatterv_cmplx_4
   end interface comms_no_sync_scatterv
 
 contains
 
+  logical function valid_communicator(comm)
+    type(w90_comm_type), intent(in) :: comm
+#ifdef W90_MPI
+    if (comm%comm == MPI_COMM_NULL) then
+      valid_communicator = .false.
+    else
+      valid_communicator = .true.
+    end if
+#else
+    valid_communicator = .true.
+#endif
+  end function
+
   ! mpi rank function for convenience
   integer function mpirank(comm)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     integer :: ierr
-#ifdef MPI
+#ifdef W90_MPI
     call mpi_comm_rank(comm%comm, mpirank, ierr)
 #else
     mpirank = 0
@@ -232,9 +264,9 @@ contains
 
   ! mpi size function for convenience
   integer function mpisize(comm)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     integer :: ierr
-#ifdef MPI
+#ifdef W90_MPI
     call mpi_comm_size(comm%comm, mpisize, ierr)
 #else
     mpisize = 1
@@ -242,19 +274,19 @@ contains
   end function
 
   ! synchronise error condition between MPI processess
-  subroutine comms_sync_err(comm, error, ierr)
+  subroutine comms_sync_error(comm, error, ierr)
     implicit none
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(inout) :: error
     integer :: ierr, mpiierr, abserr
 
-#if defined(MPI) && !defined(DISABLE_ERROR_SYNC)
+#if defined(W90_MPI) && !defined(DISABLE_ERROR_SYNC)
     abserr = abs(ierr) ! possibility of -ve values, use abs for safety
     call mpi_allreduce(MPI_IN_PLACE, abserr, 1, MPI_INTEGER, MPI_SUM, comm%comm, mpiierr)
-    ! you could check mpiierr, but it would be just too sad... fixme?
+    ! you could check mpiierr here, but truly all bets are off in that case
     if (abserr > 0 .and. ierr == 0) call recv_error(error)
 #endif
-  end subroutine comms_sync_err
+  end subroutine comms_sync_error
 
   subroutine comms_array_split(numpoints, counts, displs, comm)
     !! Given an array of size numpoints, we want to split on num_nodes nodes. This function returns
@@ -275,7 +307,7 @@ contains
     integer, intent(in) :: numpoints  !! Number of elements of the array to be scattered
     integer, intent(inout) :: counts(0:) !! Array (of size num_nodes) with the number of elements of the array on each node
     integer, intent(inout) :: displs(0:) !! Array (of size num_nodes) with the displacement relative to the global array
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer :: ratio, remainder, i
     integer :: num_nodes
@@ -300,9 +332,9 @@ contains
   subroutine comms_no_sync_barrier(comm)
     !! A barrier to synchronise all nodes
     implicit none
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_barrier(comm%comm, ierr)
@@ -316,10 +348,10 @@ contains
 
     integer, intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_bcast(array, size, MPI_INTEGER, root_id, comm%comm, ierr)
@@ -337,10 +369,10 @@ contains
 
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_bcast(array, size, MPI_DOUBLE_PRECISION, root_id, comm%comm, ierr)
@@ -359,10 +391,10 @@ contains
 
     logical, intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_bcast(array, size, MPI_LOGICAL, root_id, comm%comm, ierr)
@@ -381,10 +413,10 @@ contains
 
     character(len=*), intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_bcast(array, size, MPI_CHARACTER, root_id, comm%comm, ierr)
@@ -404,10 +436,10 @@ contains
 
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_bcast(array, size, MPI_DOUBLE_COMPLEX, root_id, comm%comm, ierr)
@@ -430,10 +462,10 @@ contains
     logical, intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: to
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_send(array, size, MPI_LOGICAL, to, mpi_send_tag, comm%comm, ierr)
@@ -453,10 +485,10 @@ contains
     integer, intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: to
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_send(array, size, MPI_INTEGER, to, mpi_send_tag, comm%comm, ierr)
@@ -476,10 +508,10 @@ contains
     character(len=*), intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: to
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_send(array, size, MPI_CHARACTER, to, mpi_send_tag, comm%comm, ierr)
@@ -499,10 +531,10 @@ contains
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: to
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_send(array, size, MPI_DOUBLE_PRECISION, to, mpi_send_tag, comm%comm, ierr)
@@ -522,10 +554,10 @@ contains
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: to
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_send(array, size, MPI_DOUBLE_COMPLEX, to, mpi_send_tag, comm%comm, ierr)
@@ -547,10 +579,10 @@ contains
     logical, intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: from
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     type(w90stat_type) :: status
     integer :: ierr
 
@@ -571,10 +603,10 @@ contains
     integer, intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: from
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     type(w90stat_type) :: status
     integer :: ierr
 
@@ -595,10 +627,10 @@ contains
     character(len=*), intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: from
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     type(w90stat_type) :: status
     integer :: ierr
 
@@ -619,10 +651,10 @@ contains
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: from
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     type(w90stat_type) :: status
     integer :: ierr
 
@@ -644,10 +676,10 @@ contains
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     integer, intent(in) :: from
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     type(w90stat_type) :: status
     integer :: ierr
 
@@ -669,10 +701,10 @@ contains
     integer, intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
     integer :: rank
     rank = mpirank(comm)
@@ -693,14 +725,14 @@ contains
                         ierr)
       else
         call mpi_reduce(array, array, size, MPI_INTEGER, MPI_SUM, root_id, comm%comm, ierr)
-      endif
+      end if
     case ('PRD')
       if (rank == root_id) then
         call mpi_reduce(MPI_IN_PLACE, array, size, MPI_INTEGER, MPI_PROD, root_id, comm%comm, &
                         ierr)
       else
         call mpi_reduce(array, array, size, MPI_INTEGER, MPI_PROD, root_id, comm%comm, ierr)
-      endif
+      end if
     case default
       call set_base_error(error, 'Unknown operation in comms_reduce_int', code_mpi)
       return
@@ -722,10 +754,10 @@ contains
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
     integer :: rank
     rank = mpirank(comm)
@@ -739,7 +771,7 @@ contains
       else
         call mpi_reduce(array, array, size, MPI_DOUBLE_PRECISION, MPI_SUM, root_id, comm%comm, &
                         ierr)
-      endif
+      end if
     case ('PRD')
       if (rank == root_id) then
         call mpi_reduce(MPI_IN_PLACE, array, size, MPI_DOUBLE_PRECISION, MPI_PROD, root_id, &
@@ -747,7 +779,7 @@ contains
       else
         call mpi_reduce(array, array, size, MPI_DOUBLE_PRECISION, MPI_PROD, root_id, comm%comm, &
                         ierr)
-      endif
+      end if
     case ('MIN')
       if (rank == root_id) then
         call mpi_reduce(MPI_IN_PLACE, array, size, MPI_DOUBLE_PRECISION, MPI_MIN, root_id, &
@@ -755,7 +787,7 @@ contains
       else
         call mpi_reduce(array, array, size, MPI_DOUBLE_PRECISION, MPI_MIN, root_id, comm%comm, &
                         ierr)
-      endif
+      end if
     case ('MAX')
       if (rank == root_id) then
         call mpi_reduce(MPI_IN_PLACE, array, size, MPI_DOUBLE_PRECISION, MPI_MAX, root_id, &
@@ -763,7 +795,7 @@ contains
       else
         call mpi_reduce(array, array, size, MPI_DOUBLE_PRECISION, MPI_MAX, root_id, comm%comm, &
                         ierr)
-      endif
+      end if
     case default
       call set_base_error(error, 'Unknown operation in comms_reduce_real', code_mpi)
       return
@@ -786,10 +818,10 @@ contains
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
     integer :: rank
     rank = mpirank(comm)
@@ -835,10 +867,10 @@ contains
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     select case (op)
@@ -876,10 +908,10 @@ contains
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     select case (op)
@@ -913,10 +945,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_PRECISION, rootglobalarray, counts, &
@@ -942,10 +974,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:)                     !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_PRECISION, rootglobalarray, counts, &
@@ -971,10 +1003,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:)                         !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_PRECISION, rootglobalarray, counts, &
@@ -1001,10 +1033,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:)                         !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_PRECISION, rootglobalarray, counts, displs, &
@@ -1037,10 +1069,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_COMPLEX, rootglobalarray, counts, displs, &
@@ -1067,10 +1099,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_COMPLEX, rootglobalarray, counts, displs, &
@@ -1097,10 +1129,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_COMPLEX, rootglobalarray, counts, displs, &
@@ -1127,10 +1159,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_COMPLEX, rootglobalarray, counts, displs, &
@@ -1157,10 +1189,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_DOUBLE_COMPLEX, rootglobalarray, counts, displs, &
@@ -1187,10 +1219,10 @@ contains
     logical, intent(inout) :: rootglobalarray !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_gatherv(array, localcount, MPI_LOGICAL, rootglobalarray, counts, displs, &
@@ -1215,10 +1247,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_scatterv(rootglobalarray, counts, displs, MPI_DOUBLE_PRECISION, array, localcount, &
@@ -1245,10 +1277,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_scatterv(rootglobalarray, counts, displs, MPI_DOUBLE_PRECISION, array, localcount, &
@@ -1275,10 +1307,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_scatterv(rootglobalarray, counts, displs, MPI_DOUBLE_PRECISION, array, localcount, &
@@ -1296,6 +1328,36 @@ contains
 
   end subroutine comms_no_sync_scatterv_real_3
 
+  subroutine comms_no_sync_scatterv_cmplx_3(array, localcount, rootglobalarray, counts, displs, error, comm)
+    !! Scatter complex data from root node (array of rank 3)
+    implicit none
+
+    complex(kind=dp), intent(inout) :: array(:, :, :) !! local array for getting data
+    integer, intent(in) :: localcount !! localcount elements will be fetched from the root node
+    complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node from which data will be sent
+    integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
+    integer, intent(in) :: displs(0:)
+    type(w90_comm_type), intent(in) :: comm
+    type(w90_error_type), allocatable, intent(out) :: error
+
+#ifdef W90_MPI
+    integer :: ierr
+
+    call mpi_scatterv(rootglobalarray, counts, displs, MPI_DOUBLE_COMPLEX, array, localcount, &
+                      MPI_DOUBLE_COMPLEX, root_id, comm%comm, ierr)
+
+    if (ierr .ne. MPI_SUCCESS) then
+      call set_base_error(error, 'Error in comms_scatterv_cmplx_3', code_mpi)
+      return
+    end if
+
+#else
+    !call zcopy(localcount, rootglobalarray, 1, array, 1)
+    array = rootglobalarray
+#endif
+
+  end subroutine comms_no_sync_scatterv_cmplx_3
+
   subroutine comms_no_sync_scatterv_cmplx_4(array, localcount, rootglobalarray, counts, displs, error, comm)
     !! Scatter complex data from root node (array of rank 4)
     implicit none
@@ -1305,10 +1367,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :, :) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_scatterv(rootglobalarray, counts, displs, MPI_DOUBLE_COMPLEX, array, localcount, &
@@ -1335,10 +1397,10 @@ contains
     integer, intent(inout) :: rootglobalarray(:) !!  array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_scatterv(rootglobalarray, counts, displs, MPI_INTEGER, array, localcount, &
@@ -1366,10 +1428,10 @@ contains
     integer, intent(inout) :: rootglobalarray(:, :) !!  array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_scatterv(rootglobalarray, counts, displs, MPI_INTEGER, array, localcount, &
@@ -1397,10 +1459,10 @@ contains
     integer, intent(inout) :: rootglobalarray(:, :, :) !!  array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-#ifdef MPI
+#ifdef W90_MPI
     integer :: ierr
 
     call mpi_scatterv(rootglobalarray, counts, displs, MPI_INTEGER, array, localcount, &
@@ -1423,9 +1485,9 @@ contains
     !! A barrier to synchronise all nodes
     implicit none
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
-    call comms_sync_err(comm, error, 0)
+    call comms_sync_error(comm, error, 0)
     if (allocated(error)) return
     ! The barrier is almost redundant since the sync is global, unless DISABLE_ERROR_SYNC defined
     call comms_no_sync_barrier(comm)
@@ -1437,10 +1499,10 @@ contains
 
     integer, intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0)
+    call comms_sync_error(comm, error, 0)
     if (allocated(error)) return
 
     call comms_no_sync_bcast_int(array, size, error, comm)
@@ -1452,10 +1514,10 @@ contains
 
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_bcast_real(array, size, error, comm)
@@ -1467,10 +1529,10 @@ contains
 
     logical, intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_bcast_logical(array, size, error, comm)
@@ -1482,10 +1544,10 @@ contains
 
     character(len=*), intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_bcast_char(array, size, error, comm)
@@ -1498,11 +1560,10 @@ contains
 
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
-    integer :: ierr
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_bcast_cmplx(array, size, error, comm)
@@ -1515,10 +1576,10 @@ contains
     integer, intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_reduce_int(array, size, op, error, comm)
@@ -1532,10 +1593,10 @@ contains
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_reduce_real(array, size, op, error, comm)
@@ -1549,10 +1610,10 @@ contains
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_reduce_cmplx(array, size, op, error, comm)
@@ -1566,10 +1627,10 @@ contains
     real(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_allreduce_real(array, size, op, error, comm)
@@ -1582,10 +1643,10 @@ contains
     complex(kind=dp), intent(inout) :: array
     integer, intent(in) :: size
     character(len=*), intent(in) :: op
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_allreduce_cmplx(array, size, op, error, comm)
@@ -1600,10 +1661,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_real_1(array, localcount, rootglobalarray, counts, displs, &
@@ -1619,10 +1680,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:)                     !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_real_2(array, localcount, rootglobalarray, counts, displs, &
@@ -1638,10 +1699,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:)                         !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_real_3(array, localcount, rootglobalarray, counts, displs, &
@@ -1657,10 +1718,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:)                         !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_real_2_3(array, localcount, rootglobalarray, counts, displs, &
@@ -1682,10 +1743,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_cmplx_1(array, localcount, rootglobalarray, counts, displs, &
@@ -1701,10 +1762,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_cmplx_2(array, localcount, rootglobalarray, counts, displs, &
@@ -1720,10 +1781,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_cmplx_3(array, localcount, rootglobalarray, counts, displs, &
@@ -1739,10 +1800,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_cmplx_3_4(array, localcount, rootglobalarray, counts, displs, &
@@ -1758,10 +1819,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :, :)
     integer, intent(in) :: counts(0:)
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_cmplx_4(array, localcount, rootglobalarray, counts, displs, &
@@ -1777,10 +1838,10 @@ contains
     logical, intent(inout) :: rootglobalarray !! array on the root node to which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_gatherv_logical(array, localcount, rootglobalarray, counts, displs, &
@@ -1796,10 +1857,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_scatterv_real_1(array, localcount, rootglobalarray, counts, displs, &
@@ -1815,10 +1876,10 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_scatterv_real_2(array, localcount, rootglobalarray, counts, displs, &
@@ -1834,15 +1895,34 @@ contains
     real(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_scatterv_real_3(array, localcount, rootglobalarray, counts, displs, &
                                        error, comm)
   end subroutine comms_scatterv_real_3
+
+  subroutine comms_scatterv_cmplx_3(array, localcount, rootglobalarray, counts, displs, error, comm)
+    !! Scatter complex data from root node (array of rank 3)
+    implicit none
+
+    complex(kind=dp), intent(inout) :: array(:, :, :) !! local array for getting data
+    integer, intent(in) :: localcount !! localcount elements will be fetched from the root node
+    complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :) !! array on the root node from which data will be sent
+    integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
+    integer, intent(in) :: displs(0:)
+    type(w90_comm_type), intent(in) :: comm
+    type(w90_error_type), allocatable, intent(out) :: error
+
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
+    if (allocated(error)) return
+
+    call comms_no_sync_scatterv_cmplx_3(array, localcount, rootglobalarray, counts, displs, &
+                                        error, comm)
+  end subroutine comms_scatterv_cmplx_3
 
   subroutine comms_scatterv_cmplx_4(array, localcount, rootglobalarray, counts, displs, error, comm)
     !! Scatter complex data from root node (array of rank 4)
@@ -1853,10 +1933,10 @@ contains
     complex(kind=dp), intent(inout) :: rootglobalarray(:, :, :, :) !! array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_scatterv_cmplx_4(array, localcount, rootglobalarray, counts, displs, &
@@ -1872,10 +1952,10 @@ contains
     integer, intent(inout) :: rootglobalarray(:) !!  array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_scatterv_int_1(array, localcount, rootglobalarray, counts, displs, &
@@ -1892,10 +1972,10 @@ contains
     integer, intent(inout) :: rootglobalarray(:, :) !!  array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_scatterv_int_2(array, localcount, rootglobalarray, counts, displs, &
@@ -1912,14 +1992,13 @@ contains
     integer, intent(inout) :: rootglobalarray(:, :, :) !!  array on the root node from which data will be sent
     integer, intent(in) :: counts(0:) !! how data should be partitioned, see MPI documentation or function comms_array_split
     integer, intent(in) :: displs(0:)
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
-    call comms_sync_err(comm, error, 0) ! sync error state across comm
+    call comms_sync_error(comm, error, 0) ! sync error state across comm
     if (allocated(error)) return
 
     call comms_no_sync_scatterv_int_3(array, localcount, rootglobalarray, counts, displs, &
                                       error, comm)
   end subroutine comms_scatterv_int_3
-
 end module w90_comms
