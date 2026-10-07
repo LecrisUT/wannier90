@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_wan_ham: Hamiltonian operations in Wannier basis      !
@@ -22,7 +35,7 @@ module w90_wan_ham
 
   use w90_constants, only: dp
   use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_fatal, &
-    set_error_input, set_error_fatal, set_error_file
+                       set_error_input, set_error_fatal, set_error_file
 
   implicit none
 
@@ -124,7 +137,7 @@ contains
           D_h(n, m, i) = delHH_bar_i(n, m)/(eig(m) - eig(n))
         end do
       end do
-    enddo
+    end do
 
   end subroutine wham_get_D_h
 
@@ -175,7 +188,7 @@ contains
           D_h(n, m, i) = delHH_bar_i(n, m)*(deltaE/(deltaE**(2) + pw90_berry%sc_eta**(2)))
         end do
       end do
-    enddo
+    end do
 
   end subroutine wham_get_D_h_P_value
 
@@ -218,7 +231,7 @@ contains
     else
       nfermi_loc = 0
       if (allocated(fermi_energy_list)) nfermi_loc = size(fermi_energy_list)
-    endif
+    end if
 
     call utility_rotate_new(delHH, UU, num_wann)
     do ife = 1, nfermi_loc
@@ -240,10 +253,10 @@ contains
             else
               JJp_list(n, m, ife) = cmplx_0
               JJm_list(m, n, ife) = cmplx_0
-            endif
-          endif
-        enddo
-      enddo
+            end if
+          end if
+        end do
+      end do
       call utility_rotate_new(JJp_list(:, :, ife), UU, num_wann, reverse=.true.)
       call utility_rotate_new(JJm_list(:, :, ife), UU, num_wann, reverse=.true.)
     end do
@@ -263,11 +276,11 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_1
     use w90_postw90_common, only: pw90common_get_occ
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     real(kind=dp), allocatable, intent(in) :: fermi_energy_list(:)
 
@@ -289,7 +302,7 @@ contains
     else
       nfermi_loc = 0
       if (allocated(fermi_energy_list)) nfermi_loc = size(fermi_energy_list)
-    endif
+    end if
     allocate (occ_list(num_wann, nfermi_loc))
 
     if (present(occ) .and. present(eig)) then
@@ -299,15 +312,15 @@ contains
     elseif (.not. present(occ) .and. .not. present(eig)) then
       call set_error_input(error, 'either occ_list or eig must be passed as arguments to get_occ_mat_list', comm)
       return
-    endif
+    end if
 
     if (present(occ)) then
       occ_list(:, 1) = occ(:)
     else
       do if = 1, nfermi_loc
         call pw90common_get_occ(fermi_energy_list(if), eig, occ_list(:, if), num_wann)
-      enddo
-    endif
+      end do
+    end if
 
     f_list = cmplx_0
     do if = 1, nfermi_loc
@@ -316,12 +329,12 @@ contains
           do i = 1, num_wann
             f_list(n, m, if) = f_list(n, m, if) &
                                + UU(n, i)*occ_list(i, if)*conjg(UU(m, i))
-          enddo
+          end do
           g_list(n, m, if) = -f_list(n, m, if)
           if (m == n) g_list(n, n, if) = g_list(n, n, if) + cmplx_1
-        enddo
-      enddo
-    enddo
+        end do
+      end do
+    end do
 
   end subroutine wham_get_occ_mat_list
 
@@ -337,7 +350,7 @@ contains
     use w90_constants, only: dp !, cmplx_0, cmplx_i
     use w90_utility, only: utility_diagonalize, utility_rotate, utility_rotate_diag
     use w90_postw90_types, only: pw90_band_deriv_degen_type
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
     type(pw90_band_deriv_degen_type), intent(in) :: pw90_band_deriv_degen
@@ -347,7 +360,7 @@ contains
     complex(kind=dp), intent(in) :: delHH_a(:, :)
     complex(kind=dp), intent(in) :: UU(:, :)
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     ! local variables
     integer                       :: i, degen_min, degen_max, dim
@@ -441,14 +454,13 @@ contains
 
     use w90_constants, only: dp
     use w90_postw90_types, only: pw90_band_deriv_degen_type, wigner_seitz_type
-    use w90_comms, only: w90comm_type, mpirank
+    use w90_comms, only: w90_comm_type, mpirank
     use w90_constants, only: dp, cmplx_0
     use w90_get_oper, only: get_HH_R
-    use w90_io, only: io_file_unit
     use w90_types, only: dis_manifold_type, print_output_type, wannier_data_type, &
-      ws_region_type, ws_distance_type, timer_list_type
+                         ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_common, only: pw90common_fourier_R_to_k_new_second_d, &
-      pw90common_fourier_R_to_k
+                                  pw90common_fourier_R_to_k
     use w90_utility, only: utility_diagonalize
 
     implicit none
@@ -459,7 +471,7 @@ contains
     type(pw90_band_deriv_degen_type), intent(in) :: pw90_band_deriv_degen
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -497,8 +509,8 @@ contains
     ! Further calls should return very fast.
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  num_valence_bands, effective_model, have_disentangled, seedname, stdout, timer, &
-                  error, comm)
+                  num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                  stdout, timer, error, comm)
     if (allocated(error)) return
 
     call pw90common_fourier_R_to_k(ws_region, wannier_data, ws_distance, wigner_seitz, HH, HH_R, &
@@ -543,12 +555,12 @@ contains
     !================================================!
 
     use w90_postw90_types, only: pw90_band_deriv_degen_type
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
     type(pw90_band_deriv_degen_type), intent(in) :: pw90_band_deriv_degen
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(in) :: num_wann
 
@@ -589,12 +601,12 @@ contains
 
     use w90_constants, only: dp
     use w90_postw90_common, only: pw90common_fourier_R_to_k_new_second_d, &
-      pw90common_fourier_R_to_k_new
+                                  pw90common_fourier_R_to_k_new
     use w90_get_oper, only: get_HH_R
     use w90_utility, only: utility_diagonalize
     use w90_types, only: print_output_type, wannier_data_type, dis_manifold_type, &
-      ws_region_type, ws_distance_type, timer_list_type
-    use w90_comms, only: w90comm_type, mpirank
+                         ws_region_type, ws_distance_type, timer_list_type
+    use w90_comms, only: w90_comm_type, mpirank
     use w90_postw90_types, only: wigner_seitz_type
 
     implicit none
@@ -605,7 +617,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -639,8 +651,8 @@ contains
 
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                  timer, error, comm)
+                  num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                  stdout, timer, error, comm)
     if (allocated(error)) return
 
     allocate (delHH(num_wann, num_wann, 3))
@@ -660,8 +672,8 @@ contains
       else
         call wham_get_JJp_JJm_list(delHH(:, :, i), UU, eig, JJp_list(:, :, :, i), &
                                    JJm_list(:, :, :, i), num_wann, fermi_energy_list)
-      endif
-    enddo
+      end if
+    end do
 
   end subroutine wham_get_eig_UU_HH_JJlist
 
@@ -682,13 +694,13 @@ contains
     !================================================!
 
     use w90_constants, only: dp
-    use w90_get_oper, only: get_HH_R, get_AA_R
+    use w90_get_oper, only: get_HH_R, get_AA_R_effective, get_AA_R
     use w90_postw90_common, only: pw90common_fourier_R_to_k_new_second_d_TB_conv
     use w90_types, only: print_output_type, wannier_data_type, dis_manifold_type, &
-      kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
+                         kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_utility, only: utility_diagonalize
     use w90_postw90_types, only: pw90_berry_mod_type, wigner_seitz_type
-    use w90_comms, only: w90comm_type, mpirank
+    use w90_comms, only: w90_comm_type, mpirank
 
     implicit none
 
@@ -699,7 +711,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -729,14 +741,19 @@ contains
 
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  num_valence_bands, effective_model, have_disentangled, seedname, stdout, timer, &
-                  error, comm)
+                  num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                  stdout, timer, error, comm)
     if (allocated(error)) return
 
-    call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                  v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                  num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                  comm)
+    if (effective_model) then
+      call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                              stdout, timer, error, comm)
+    else
+      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                    v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                    num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+    end if
+
     if (allocated(error)) return
 
     call pw90common_fourier_R_to_k_new_second_d_TB_conv(kpt, HH_R, AA_R, num_wann, ws_region, &
@@ -766,9 +783,9 @@ contains
     use w90_get_oper, only: get_HH_R
     use w90_postw90_common, only: pw90common_fourier_R_to_k_new_second_d
     use w90_utility, only: utility_diagonalize
-    use w90_comms, only: w90comm_type, mpirank
+    use w90_comms, only: w90_comm_type, mpirank
     use w90_types, only: print_output_type, wannier_data_type, dis_manifold_type, &
-      ws_region_type, ws_distance_type, timer_list_type
+                         ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: wigner_seitz_type
 
     implicit none
@@ -778,7 +795,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -807,8 +824,8 @@ contains
 
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  num_valence_bands, effective_model, have_disentangled, seedname, stdout, timer, &
-                  error, comm)
+                  num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                  stdout, timer, error, comm)
     if (allocated(error)) return
 
     call pw90common_fourier_R_to_k_new_second_d(kpt, HH_R, num_wann, ws_region, wannier_data, &

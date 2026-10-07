@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_types: derived types encapsulating data required by   !
@@ -37,23 +50,23 @@ module w90_types
     !! Contains variables to control output file formatting and verbosity.
     !!==================================================
     ! verbosity flags - w90_readwrite_read_verbosity
-    integer :: iprint
+    integer :: iprint = 1
     ! Controls the verbosity of the output
-    integer :: timing_level
+    integer :: timing_level = 1
     ! REVIEW_2021-07-22: we agree that we don't need both length_unit and lenconfac;
     ! REVIEW_2021-07-22: instead could have a utility function.
-    character(len=20) :: length_unit ! MAYBE, just have a separate variable?
+    character(len=20) :: length_unit = 'ang' ! MAYBE, just have a separate variable?
     ! Units for length
-    real(kind=dp) :: lenconfac !lots of write statements in wannier90
+    real(kind=dp) :: lenconfac = 1.0_dp !lots of write statements in wannier90
   end type print_output_type
 
   type w90_system_type
     !!==================================================
     !! Contains physical information about the material being calculated.
     !!==================================================
-    integer :: num_valence_bands !wannierise, postw90/postw90_common, get_oper and berry
-    integer :: num_elec_per_state !wannierise and postw90 dos and boltzwann
-    logical :: spinors   !are our WF spinors? !kmesh, plot, wannier_lib, postw90/gyrotropic
+    integer :: num_valence_bands ! **no sensible default**
+    integer :: num_elec_per_state = 2 ! used in: wannierise and postw90 dos and boltzwann
+    logical :: spinors = .false.  !are our WF spinors? !kmesh, plot, wannier_lib, postw90/gyrotropic
   end type w90_system_type
 
   ! timer from io.F90
@@ -72,10 +85,10 @@ module w90_types
   end type timer_list_type
 
   type ws_region_type
-    logical :: use_ws_distance !ws_distance, plot and postw90_common
-    real(kind=dp) :: ws_distance_tol !ws_distance, hamiltonian and postw90_common
+    logical :: use_ws_distance = .true. !ws_distance, plot and postw90_common
+    real(kind=dp) :: ws_distance_tol = 1.e-5_dp !ws_distance, hamiltonian and postw90_common
     !! absolute tolerance for the distance to equivalent positions
-    integer :: ws_search_size(3) ! ws_distance, hamiltonian
+    integer :: ws_search_size(3) = 2 ! ws_distance, hamiltonian
     !! maximum extension in each direction of the supercell of the BvK cell
     !! to search for points inside the Wigner-Seitz cell
   end type ws_region_type
@@ -119,13 +132,23 @@ module w90_types
     !!==================================================
     !! Contains information that can be provided by the user about determining the kmesh
     !!==================================================
-    integer :: num_shells
+    integer :: num_shells = 0
     !! no longer an input keyword
-    logical :: skip_B1_tests
+    !! higher-order finite difference
+    integer :: max_shells_h ! \sum ((3, 2i)) (combination with rep.) = n(4n*2 + 15n + 17)/6
+    integer :: max_shells_aux ! = 6 for higher-order simple algorithm, n(4n*2 + 15n + 17)/6 for search algorithm
+    integer :: num_nnmax_h ! 2*n(4n*2 + 15n + 17)/6
+    integer :: higher_order_n = 1
+    logical :: higher_order_nearest_shells = .false. ! experimental feature
+    !! A simpler algorithm of determining bvectors
+    logical :: kmesh_shell_from_file = .false.
+    !! allow specifying b-vector shells from file (for complex cases where the automatic procedure fails)
+    logical :: skip_B1_tests = .false.
     !! do not check the B1 condition
     integer, allocatable :: shell_list(:)
-    integer :: search_shells
-    real(kind=dp) :: tol
+    integer :: search_shells = 36
+    integer :: search_supcell_size = 5 !Size of supercell (of recip cell) in which to search for k-point shells
+    real(kind=dp) :: tol = 0.000001_dp
   end type kmesh_input_type
 
   !AAM: There are a number of ways one can handle the initial guess. (i) specify explicit
@@ -135,7 +158,7 @@ module w90_types
   !AAM: (vi) An external code may also simply supply to w90 an Amn(k) matrix that is has independently
   !AAM: generated, in which case projection_type is not needed.
   !AAM: It makes sense to keep the projection sites separate from the projection_type data below.
-  type proj_input_type
+  type proj_type
     !!==================================================
     !! Contains information that can be provided by the user about the projections
     !!==================================================
@@ -144,34 +167,40 @@ module w90_types
     ! REVIEW_2021-07-22: In the future this can be logically distinct from the projection sites.
     ! REVIEW_2021-07-22: For now, when defining proj_input_type, also define sites inside the
     ! REVIEW_2021-07-22: new guiding centres type.
-    real(kind=dp), allocatable :: site(:, :)
-    integer, allocatable :: l(:)
-    integer, allocatable :: m(:)
-    integer, allocatable :: s(:)
-    real(kind=dp), allocatable :: s_qaxis(:, :)
-    real(kind=dp), allocatable :: z(:, :)
-    real(kind=dp), allocatable :: x(:, :)
-    integer, allocatable :: radial(:)
-    real(kind=dp), allocatable :: zona(:)
-    ! a u t o m a t i c   p r o j e c t i o n s
-    ! vv: Writes a new block in .nnkp
-    logical :: auto_projections
-  end type proj_input_type
+
+    ! regarding defaults: specific flow in readwrite means all values are assigned anyway
+    ! using defaults here requires restructuring get_projections() (readwrite.F90)
+    ! site, l, m don't have reasonable defaults
+    integer :: l, m, s
+    integer :: radial = 1
+    real(kind=dp) :: site(3)
+    real(kind=dp) :: s_qaxis(3) = (/0.0_dp, 0.0_dp, 1.0_dp/)
+    real(kind=dp) :: z(3) = (/0.0_dp, 0.0_dp, 1.0_dp/)
+    real(kind=dp) :: x(3) = (/1.0_dp, 0.0_dp, 0.0_dp/)
+    real(kind=dp) :: zona = 1.0_dp
+  end type proj_type
 
   ! kmesh information (set in kmesh)
   type kmesh_info_type
     !!==================================================
     !! Contains derived information about the kmesh
     !!==================================================
-    integer              :: nnh           ! the number of b-directions (bka)
-    integer              :: nntot         ! total number of neighbours for each k-point
-    integer, allocatable :: nnlist(:, :)   ! list of neighbours for each k-point
+    integer              :: nnh               ! the number of b-directions (bka)
+    integer              :: nntot             ! total number of neighbours for each k-point
+    integer, allocatable :: nnlist(:, :)      ! list of neighbours for each k-point
     integer, allocatable :: neigh(:, :)
-    integer, allocatable :: nncell(:, :, :) ! gives BZ of each neighbour of each k-point
+    integer, allocatable :: nncell(:, :, :)   ! gives BZ of each neighbour of each k-point
+    ! JJ the following two arrays allow the Stengel-Spaldin method to be used without sorting b-vectors globally
+    ! the order of b-vectors is explicit in ".mmn" files, but unfortunately not in ".uHu" files
+    ! these arrays could replace sorting bk(:,:, ik), but this is not exploited now
+    ! these are alloc'd and assigned only in the use_ss_functional=t case
+    integer, allocatable :: nnord(:, :)       ! ordering of b-vectors: bk(:,nnord(nn,ik),ik) = bk(:,nn,1)
+    integer, allocatable :: nninv(:, :)       ! ordering of b-vectors: bk(:,nninv(nn,ik),1)  = bk(:,nn,ik)
+    integer, allocatable :: nnrev(:, :)       ! ordering of b-vectors: bk(:,nnrev(nn,ik),ik) = - bk(:,nn,1) (opposite vec)
     real(kind=dp)              :: wbtot
-    real(kind=dp), allocatable :: wb(:)         ! weights associated with neighbours of each k-point
-    real(kind=dp), allocatable :: bk(:, :, :)     ! the b-vectors that go from each k-point to its neighbours
-    real(kind=dp), allocatable :: bka(:, :)      ! the b-directions from 1st k-point to its neighbours
+    real(kind=dp), allocatable :: wb(:)       ! weights associated with neighbours of each k-point
+    real(kind=dp), allocatable :: bk(:, :, :) ! the b-vectors that go from each k-point to its neighbours
+    real(kind=dp), allocatable :: bka(:, :)   ! the b-directions from 1st k-point to its neighbours
     logical :: explicit_nnkpts
     !! nnkpts block is in the input file (allowed only for post-proc setup)
   end type kmesh_info_type
@@ -181,18 +210,35 @@ module w90_types
     !!==================================================
     !! Contains information about the manifold of states from which the MLWFs are to be disentangled.
     !!==================================================
-    real(kind=dp) :: win_min
+    real(kind=dp) :: win_min = -huge(0.0_dp)
     !! lower bound of the disentanglement outer window
-    real(kind=dp) :: win_max
+    real(kind=dp) :: win_max = huge(0.0_dp)
     !! upper bound of the disentanglement outer window
-    real(kind=dp) :: froz_min
+    real(kind=dp) :: froz_min = -huge(0.0_dp)
     !! lower bound of the disentanglement inner (frozen) window
-    real(kind=dp) :: froz_max
+    real(kind=dp) :: froz_max = huge(0.0_dp)
     !! upper bound of the disentanglement inner (frozen) window
-    logical :: frozen_states
+    logical :: frozen_states = .false.
+    !! whether to use energy frozen window, i.e., froz_min/froz_max
+    real(kind=dp) :: proj_min = -1.0_dp
+    !! lower threshold of the projectability disentanglement, below are discarded
+    !! (negative = unset: set explicitly or determined automatically via proj_auto)
+    real(kind=dp) :: proj_max = -1.0_dp
+    !! upper threshold of the projectability disentanglement, equal and above are frozen
+    !! (negative = unset: set explicitly or determined automatically via proj_auto)
+    logical :: frozen_proj
+    !! whether to use projectability frozen window, i.e., proj_min/proj_max
+    logical :: proj_auto = .true.
+    !! whether to determine proj_min/proj_max automatically via multi-Otsu thresholding
+    !! (ignored when proj_min/proj_max are set explicitly)
+    integer :: proj_auto_num_classes = 5
+    !! number of classes for the automatic multi-Otsu projectability thresholds
     ! disentangle parameters
     ! Used by plot, hamiltonian, wannierise, postw90_common, get_oper - not read
     integer, allocatable :: ndimwin(:)
+    !! number of bands in outer window at each k
+    integer, allocatable :: nfirstwin(:)
+    !! index of first band in outer window at each k
     logical, allocatable :: lwindow(:, :)
   end type dis_manifold_type
 
@@ -206,8 +252,8 @@ module w90_types
     integer, allocatable :: species_num(:)
     character(len=maxlen), allocatable :: label(:)
     character(len=2), allocatable :: symbol(:)
-    integer :: num_atoms
-    integer :: num_species
+    integer :: num_atoms = 0
+    integer :: num_species = 0
   end type atom_data_type
 
   ! plot.F90 and postw90/kpath
@@ -217,9 +263,45 @@ module w90_types
     !! Note: The length of bands_label and the second index of bands_spec_points is twice the
     !! number of segments specified by the user. Each pair of special points defines a segment.
     !!==================================================
-    integer num_points_first_segment
+    integer :: num_points_first_segment = 100
     character(len=20), allocatable :: labels(:)
     real(kind=dp), allocatable :: points(:, :)
+    logical :: bands_kpt_explicit = .false. ! use user provided list of kpoints for bands kpath
+    real(kind=dp), allocatable ::bands_kpt_frac(:, :) ! explicit bands kpoints in fractional coordinate
   end type kpoint_path_type
+
+  type settings_data
+    !!==================================================
+    !! structure to hold a scalar and array settings
+    !!==================================================
+    ! for simplicity, consider arrays of different rank
+    ! as different types; otherwise reshape, etc.
+    character(len=:), allocatable :: keyword ! token
+    character(len=:), allocatable :: txtdata ! text data item
+    character(len=:), allocatable :: c2d(:)
+    ! integer data
+    integer, allocatable :: i1d(:)
+    integer, allocatable :: i2d(:, :)
+    integer, allocatable :: idata
+    ! logical data
+    logical, allocatable :: l1d(:)
+    logical, allocatable :: ldata
+    ! fp data
+    real(kind=dp), allocatable :: r1d(:)
+    real(kind=dp), allocatable :: r2d(:, :)
+    real(kind=dp), allocatable :: rdata
+  end type settings_data
+
+  type settings_type
+    !!==================================================
+    !! structure to hold input var/values
+    !! contents of .win file and settings set by library interface
+    !!==================================================
+    integer :: num_entries = 0, num_entries_max = 0 ! number of keywords stored and max
+    type(settings_data), allocatable :: entries(:)
+    ! data for processing input file
+    integer :: num_lines
+    character(len=maxlen), allocatable :: in_data(:) ! contents of .win file
+  end type settings_type
 
 end module w90_types
