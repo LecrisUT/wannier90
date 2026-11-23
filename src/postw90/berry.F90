@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_berry: computes Berry phase and related properties    !
@@ -30,6 +43,7 @@ module w90_berry
   !! *  QZYZ18 = PRB 98, 214402 (2018)  (spin Hall conductivity - SHC)
   !! *  RPS19  = PRB 99, 235113 (2019)  (spin Hall conductivity - SHC)
   !! *  IAdJS19 = arXiv:1910.06172 (2019) (quasi-degenerate k.p)
+  !! *  GP22 = PRB 106, 075126 (2022)   (tetrahedron method for spectral functions, SHC)
   ! ---------------------------------------------------------------
   !
   ! * Undocumented, works for limited purposes only:
@@ -37,7 +51,7 @@ module w90_berry
 
   use w90_constants, only: dp
   use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_fatal, &
-    set_error_input, set_error_fatal, set_error_file
+                       set_error_input, set_error_fatal, set_error_file
 
   implicit none
 
@@ -98,17 +112,18 @@ contains
     !
     !================================================!
 
-    use w90_comms, only: comms_reduce, w90comm_type, mpirank, mpisize
-    use w90_constants, only: dp, cmplx_0, pi, pw90_physical_constants_type
+    use w90_comms, only: comms_reduce, w90_comm_type, mpirank, mpisize, comms_array_split
+    use w90_constants, only: dp, cmplx_0, cmplx_i, pi, pw90_physical_constants_type
     use w90_utility, only: utility_recip_lattice_base
-    use w90_get_oper, only: get_HH_R, get_AA_R, get_BB_R, get_CC_R, get_SS_R, get_SHC_R, &
-      get_SAA_R, get_SBB_R
-    use w90_io, only: io_file_unit, io_stopwatch_start, io_stopwatch_stop
+    use w90_get_oper, only: get_HH_R, get_AA_R_effective, get_AA_R, get_BB_R, get_CC_R, get_SS_R, get_SHC_R, &
+                            get_SH_R, get_SAA_R, get_SBB_R
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_mod_type, &
-      pw90_spin_hall_type, pw90_band_deriv_degen_type, pw90_oper_read_type, wigner_seitz_type, &
-      kpoint_dist_type
+                                 pw90_spin_hall_type, pw90_band_deriv_degen_type, pw90_oper_read_type, wigner_seitz_type, &
+                                 kpoint_dist_type
+    use w90_tetrahedron
 
     implicit none
 
@@ -124,7 +139,7 @@ contains
     type(pw90_physical_constants_type), intent(in) :: physics
     type(ws_region_type), intent(in) :: ws_region
     type(pw90_spin_hall_type), intent(in) :: pw90_spin_hall
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -203,6 +218,20 @@ contains
     ! Spin Hall conductivity
     real(kind=dp), allocatable :: shc_fermi(:), shc_k_fermi(:)
     complex(kind=dp), allocatable :: shc_freq(:), shc_k_freq(:)
+    ! Tetrahedron method
+    real(kind=dp), allocatable :: imjv(:, :, :, :, :)
+    real(kind=dp), allocatable :: eig(:, :, :, :)
+    real(kind=dp), allocatable :: imjv_tet(:, :, :)
+    real(kind=dp), allocatable :: eig_tet(:, :)
+    integer, allocatable :: counts(:)
+    integer, allocatable :: displs(:)
+    real(kind=dp)     :: kptc(3, 64), kptv(4, 3), &
+                         Ftet(4), E1tet(4), E2tet(4), ttet(3, 3), omega, Ef
+    complex(kind=dp)  :: shc_k_tet
+    integer           :: itet, m, l, nfreq, tet_array(6, 20)
+    real(kind=dp)     :: E1_opt(20), E2_opt(20), F_opt(20), P_matrix(4, 20)
+    real(kind=dp), parameter :: mesh_shift = 0.5_dp
+
     ! for fermi energy scan, adaptive kmesh
     real(kind=dp), allocatable :: shc_k_fermi_dummy(:)
 
@@ -225,7 +254,7 @@ contains
     if (fermi_n == 0) then
       call set_error_input(error, 'Must specify one or more Fermi levels when berry=true', comm)
       return
-    endif
+    end if
 
     if (print_output%timing_level > 1 .and. print_output%iprint > 0) &
       call io_stopwatch_start('berry: prelims', timer)
@@ -262,43 +291,51 @@ contains
     if (eval_ahc) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, &
+                    ws_region, stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      end if
       if (allocated(error)) return
       imf_list = 0.0_dp
       adpt_counter_list = 0
-    endif
+    end if
 
     if (eval_morb) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      end if
       if (allocated(error)) return
-      call get_BB_R(dis_manifold, kmesh_info, kpt_latt, print_output, BB_R, v_matrix, eigval, &
-                    scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
+      call get_BB_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, HH_R, BB_R, v_matrix, &
+                    eigval, scissors_shift, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
                     num_wann, have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_CC_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, CC_R, &
-                    v_matrix, eigval, scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, &
-                    num_bands, num_kpts, num_wann, have_disentangled, seedname, stdout, timer, &
-                    error, comm)
+      call get_CC_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
+                    HH_R, BB_R, CC_R, v_matrix, eigval, scissors_shift, wigner_seitz, ws_distance, &
+                    ws_region, num_bands, num_kpts, num_wann, have_disentangled, seedname, stdout, &
+                    timer, error, comm)
       if (allocated(error)) return
 
       imf_list2 = 0.0_dp
       img_list = 0.0_dp
       imh_list = 0.0_dp
-    endif
+    end if
 
     ! List here berry_tasks that assume nfermi=1
     !
@@ -307,18 +344,22 @@ contains
       call set_error_input(error, 'The berry_task(s, comm, comm) you chose require that you specify a single ' &
                            //'Fermi energy: scanning the Fermi energy is not implemented', comm)
       return
-    endif
+    end if
 
     if (eval_kubo) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, &
-                    error, comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      end if
       if (allocated(error)) return
       allocate (kubo_H_k(3, 3, pw90_berry%kubo_nfreq))
       allocate (kubo_H(3, 3, pw90_berry%kubo_nfreq))
@@ -332,7 +373,7 @@ contains
       if (spin_decomp) then
 
         call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, &
-                      eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
+                      eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
                       num_wann, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
         allocate (kubo_H_k_spn(3, 3, 3, pw90_berry%kubo_nfreq))
@@ -341,63 +382,76 @@ contains
         allocate (kubo_AH_spn(3, 3, 3, pw90_berry%kubo_nfreq))
         allocate (jdos_k_spn(3, pw90_berry%kubo_nfreq))
         allocate (jdos_spn(3, pw90_berry%kubo_nfreq))
-        ! fixme, shouldn't we pedantically check these allocs also JJ
+        ! fixme, check these allocs for failure
         kubo_H_spn = cmplx_0
         kubo_AH_spn = cmplx_0
         jdos_spn = 0.0_dp
-      endif
-    endif
+      end if
+    end if
 
     if (eval_sc) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      end if
       if (allocated(error)) return
       allocate (sc_k_list(3, 6, pw90_berry%kubo_nfreq))
       allocate (sc_list(3, 6, pw90_berry%kubo_nfreq))
       sc_k_list = 0.0_dp
       sc_list = 0.0_dp
-    endif
+    end if
 
     if (eval_shc) then
 
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
-      call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, AA_R, HH_R, &
-                    v_matrix, eigval, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, &
-                    num_wann, effective_model, have_disentangled, seedname, stdout, timer, error, &
-                    comm)
+      if (effective_model) then
+        call get_AA_R_effective(print_output, AA_R, HH_R, wigner_seitz%nrpts, num_wann, seedname, &
+                                stdout, timer, error, comm)
+      else
+        call get_AA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, wannier_data, AA_R, &
+                      v_matrix, eigval, wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, &
+                      num_wann, have_disentangled, seedname, stdout, timer, error, comm)
+      end if
       if (allocated(error)) return
       call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, eigval, &
-                    wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                    wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                     have_disentangled, seedname, stdout, timer, error, comm)
       if (allocated(error)) return
 
       if (index(pw90_spin_hall%method, 'qiao') > 0) then
         call get_SHC_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
                        pw90_spin_hall, SH_R, SHR_R, SR_R, v_matrix, eigval, scissors_shift, &
-                       wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                       wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                        num_valence_bands, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
       else
-        call get_SAA_R(dis_manifold, kmesh_info, kpt_latt, print_output, SAA_R, v_matrix, &
-                       scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, &
+        call get_SH_R(dis_manifold, kmesh_info, kpt_latt, print_output, pw90_oper_read, &
+                      pw90_spin_hall, SH_R, v_matrix, eigval, scissors_shift, &
+                      wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
+                      num_valence_bands, have_disentangled, seedname, stdout, timer, error, comm)
+        if (allocated(error)) return
+        call get_SAA_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, SS_R, SAA_R, &
+                       v_matrix, scissors_shift, wigner_seitz, ws_distance, ws_region, num_bands, &
                        num_kpts, num_wann, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
-        call get_SBB_R(dis_manifold, kmesh_info, kpt_latt, print_output, SBB_R, v_matrix, &
-                       scissors_shift, wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, &
+        call get_SBB_R(pw90_berry, dis_manifold, kmesh_info, kpt_latt, print_output, SH_R, SBB_R, &
+                       v_matrix, scissors_shift, wigner_seitz, ws_distance, ws_region, num_bands, &
                        num_kpts, num_wann, have_disentangled, seedname, stdout, timer, error, comm)
         if (allocated(error)) return
-      endif
+      end if
 
       if (pw90_spin_hall%freq_scan) then
         allocate (shc_freq(pw90_berry%kubo_nfreq))
@@ -413,20 +467,48 @@ contains
         !only used for fermiscan & adpt kmesh
         shc_k_fermi_dummy = 0.0_dp
         adpt_counter_list = 0
-      endif
+      end if
 
-    endif
+      if (pw90_berry%tetrahedron_method) then
+        if (pw90_berry%tetrahedron_higher_correction) then
+          allocate (imjv(num_wann, num_wann, 0:pw90_berry%kmesh%mesh(1) + 2, 0:pw90_berry%kmesh%mesh(2) + 2, 0:3))
+          allocate (eig(num_wann, 0:pw90_berry%kmesh%mesh(1) + 2, 0:pw90_berry%kmesh%mesh(2) + 2, 0:3))
+          allocate (imjv_tet(num_wann, num_wann, 64))
+          allocate (eig_tet(num_wann, 64))
+          allocate (counts(0:num_nodes - 1))
+          allocate (displs(0:num_nodes - 1))
+          call tetrahedron_P_matrix_init(P_matrix)
+          call tetrahedron_array_init(tet_array)
+          if (pw90_spin_hall%freq_scan) then
+            nfreq = pw90_berry%kubo_nfreq
+          else
+            nfreq = fermi_n
+          end if
+        else !w/o correction: not implemented
+          call set_error_input(error, 'Error: tetrahedron method without higher-order correction not implemented', comm)
+          !  allocate (imjv(num_wann, num_wann, pw90_berry%kmesh%mesh(1) + 1, pw90_berry%kmesh%mesh(2) + 1, 2))
+          !  allocate (eig(num_wann, pw90_berry%kmesh%mesh(1) + 1, pw90_berry%kmesh%mesh(2) + 1, 2))
+          !  allocate (imjv_tet(num_wann, num_wann, 8))
+          !  allocate (eig_tet(num_wann, 8))
+          !  allocate (counts(0:num_nodes - 1))
+          !  allocate (displs(0:num_nodes - 1))
+          !  !tetrahedron_array_small
+        end if
+        call comms_array_split(pw90_berry%kmesh%mesh(3), counts, displs, comm)
+      end if
+
+    end if
 
     if (eval_kdotp) then
       call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                     eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                    num_valence_bands, effective_model, have_disentangled, seedname, stdout, &
-                    timer, error, comm)
+                    num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                    stdout, timer, error, comm)
       if (allocated(error)) return
       kdotp_nbands = size(pw90_berry%kdotp_bands)
       allocate (kdotp(kdotp_nbands, kdotp_nbands, 3, 3, 3))
       kdotp = cmplx_0
-    endif
+    end if
 
     if (print_output%iprint > 0) then
 
@@ -449,8 +531,8 @@ contains
         else
           write (stdout, '(/,3x,a)') '* Complex optical conductivity'
           write (stdout, '(/,3x,a)') '* Joint density of states'
-        endif
-      endif
+        end if
+      end if
 
       if (eval_sc) write (stdout, '(/,3x,a)') &
         '* Shift current'
@@ -461,13 +543,13 @@ contains
           write (stdout, '(/,3x,a)') '  Qiao''s SHC (Phys.Rev.B 98.214402)'
         else
           write (stdout, '(/,3x,a)') '  Ryoo''s SHC (Phys.Rev.B 99.235113)'
-        endif
+        end if
         if (pw90_spin_hall%freq_scan) then
           write (stdout, '(/,3x,a)') '  Frequency scan'
         else
           write (stdout, '(/,3x,a)') '  Fermi energy scan'
-        endif
-      endif
+        end if
+      end if
 
       if (eval_kdotp) write (stdout, '(/,3x,a)') '* k.p expansion coefficients'
 
@@ -475,15 +557,24 @@ contains
         if (eval_morb) then
           call set_error_input(error, 'transl_inv=T disabled for morb', comm)
           return
-        endif
+        end if
         write (stdout, '(/,1x,a)') 'Using a translationally-invariant discretization for the'
         write (stdout, '(1x,a)') 'band-diagonal Wannier matrix elements of r, etc.'
-      endif
+      end if
+
+      if (pw90_berry%tetrahedron_method) then
+        if (pw90_berry%tetrahedron_higher_correction) then
+          write (stdout, '(/,3x,a)') '  Tetrahedron method with higher-order correction(PRB 89, 094515)'
+        else
+          write (stdout, '(/,3x,a)') '  Tetrahedron method without correction(PRB 89, 094515)'
+          call set_error_input(error, 'Not yet implemented', comm)
+        end if
+      end if
 
       if (print_output%timing_level > 1) then
         call io_stopwatch_stop('berry: prelims', timer)
         call io_stopwatch_start('berry: k-interpolation', timer)
-      endif
+      end if
 
       if (eval_kdotp) then
         ! JJ pw90_berry%kdotp_bands is only allocated on process 0
@@ -505,7 +596,7 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating adkpt in berry', comm)
       return
-    endif
+    end if
     ikpt = 0
     !
     ! OLD VERSION (only works correctly for odd grids including original point)
@@ -538,7 +629,10 @@ contains
     !
     if (pw90_berry%wanint_kpoint_file) then
 
-      ! NOTE: still need to specify pw90_berry_kmesh in the input file
+      if (pw90_berry%tetrahedron_method) call set_error_input &
+        (error, 'Tetrahedron method not implemented with wanint_kpoint_file', comm)
+      if (allocated(error)) return
+      ! NOTE: still need to specify pw90_pw90_berry%kmesh%mesh in the input file
       !
       !        - Must use the correct nominal value in order to
       !          correctly set up adaptive smearing in kubo
@@ -578,8 +672,8 @@ contains
               ladpt(if) = .true.
             else
               imf_list(:, :, if) = imf_list(:, :, if) + imf_k_list(:, :, if)*kweight
-            endif
-          enddo
+            end if
+          end do
           if (any(ladpt)) then
             do loop_adpt = 1, pw90_berry%curv_adpt_kmesh**3
               ! Using imf_k_list here would corrupt values for other
@@ -598,10 +692,10 @@ contains
                 if (ladpt(if)) then
                   imf_list(:, :, if) = imf_list(:, :, if) &
                                        + imf_k_list_dummy(:, :, if)*kweight_adpt
-                endif
-              enddo
+                end if
+              end do
             end do
-          endif
+          end if
         end if
 
         if (eval_morb) then
@@ -617,7 +711,7 @@ contains
           imf_list2 = imf_list2 + imf_k_list*kweight
           img_list = img_list + img_k_list*kweight
           imh_list = imh_list + imh_k_List*kweight
-        endif
+        end if
 
         if (eval_kubo) then
           if (spin_decomp) then
@@ -639,7 +733,7 @@ contains
                                   num_valence_bands, effective_model, have_disentangled, &
                                   spin_decomp, seedname, stdout, timer, error, comm)
             if (allocated(error)) return
-          endif
+          end if
           kubo_H = kubo_H + kubo_H_k*kweight
           kubo_AH = kubo_AH + kubo_AH_k*kweight
           jdos = jdos + jdos_k*kweight
@@ -647,8 +741,8 @@ contains
             kubo_H_spn = kubo_H_spn + kubo_H_k_spn*kweight
             kubo_AH_spn = kubo_AH_spn + kubo_AH_k_spn*kweight
             jdos_spn = jdos_spn + jdos_k_spn*kweight
-          endif
-        endif
+          end if
+        end if
 
         if (eval_sc) then
           call berry_get_sc_klist(pw90_berry, dis_manifold, fermi_energy_list, kmesh_info, &
@@ -673,7 +767,7 @@ contains
           if (print_output%iprint > 0) then
             call berry_print_progress(kpoint_dist%num_int_kpts_on_node(my_node_id), loop_xyz, &
                                       1, 1, stdout)
-          endif
+          end if
           if (.not. pw90_spin_hall%freq_scan) then
             call berry_get_shc_klist(pw90_berry, dis_manifold, fermi_energy_list, kpt_latt, &
                                      pw90_band_deriv_degen, ws_region, pw90_spin_hall, &
@@ -703,8 +797,8 @@ contains
                   adpt_counter_list(1) = adpt_counter_list(1) + 1
                   ladpt_kmesh = .true.
                   exit
-                endif
-              enddo
+                end if
+              end do
             else
               ladpt_kmesh = .false.
             end if
@@ -745,7 +839,7 @@ contains
 
       end do !loop_xyz
 
-    else! Do not read 'kpoint.dat'. Loop over a regular grid in the full BZ
+    else if (.not. pw90_berry%tetrahedron_method) then! Do not read 'kpoint.dat'. Loop over a regular grid in the full BZ
 
       kweight = db1*db2*db3
       kweight_adpt = kweight/pw90_berry%curv_adpt_kmesh**3
@@ -783,8 +877,8 @@ contains
               ladpt(if) = .true.
             else
               imf_list(:, :, if) = imf_list(:, :, if) + imf_k_list(:, :, if)*kweight
-            endif
-          enddo
+            end if
+          end do
           if (any(ladpt)) then
             do loop_adpt = 1, pw90_berry%curv_adpt_kmesh**3
               ! Using imf_k_list here would corrupt values for other
@@ -803,10 +897,10 @@ contains
                 if (ladpt(if)) then
                   imf_list(:, :, if) = imf_list(:, :, if) &
                                        + imf_k_list_dummy(:, :, if)*kweight_adpt
-                endif
-              enddo
+                end if
+              end do
             end do
-          endif
+          end if
         end if
 
         if (eval_morb) then
@@ -822,7 +916,7 @@ contains
           imf_list2 = imf_list2 + imf_k_list*kweight
           img_list = img_list + img_k_list*kweight
           imh_list = imh_list + imh_k_List*kweight
-        endif
+        end if
 
         if (eval_kubo) then
           if (spin_decomp) then
@@ -846,7 +940,7 @@ contains
                                   spin_decomp, seedname, stdout, timer, error, comm)
             if (allocated(error)) return
 
-          endif
+          end if
           kubo_H = kubo_H + kubo_H_k*kweight
           kubo_AH = kubo_AH + kubo_AH_k*kweight
           jdos = jdos + jdos_k*kweight
@@ -854,8 +948,8 @@ contains
             kubo_H_spn = kubo_H_spn + kubo_H_k_spn*kweight
             kubo_AH_spn = kubo_AH_spn + kubo_AH_k_spn*kweight
             jdos_spn = jdos_spn + jdos_k_spn*kweight
-          endif
-        endif
+          end if
+        end if
 
         if (eval_sc) then
           call berry_get_sc_klist(pw90_berry, dis_manifold, fermi_energy_list, kmesh_info, &
@@ -881,7 +975,7 @@ contains
           if (print_output%iprint > 0) then
             call berry_print_progress(PRODUCT(pw90_berry%kmesh%mesh) - 1, loop_xyz, my_node_id, &
                                       num_nodes, stdout)
-          endif
+          end if
           if (.not. pw90_spin_hall%freq_scan) then
             call berry_get_shc_klist(pw90_berry, dis_manifold, fermi_energy_list, kpt_latt, &
                                      pw90_band_deriv_degen, ws_region, pw90_spin_hall, &
@@ -911,8 +1005,8 @@ contains
                   adpt_counter_list(1) = adpt_counter_list(1) + 1
                   ladpt_kmesh = .true.
                   exit
-                endif
-              enddo
+                end if
+              end do
             else
               ladpt_kmesh = .false.
             end if
@@ -953,6 +1047,148 @@ contains
 
       end do !loop_xyz
 
+    else !tetrahedron_method
+      if (eval_shc) then
+        ! to do: move it to tetrahedron.f90?
+        do loop_z = displs(my_node_id), displs(my_node_id) + counts(my_node_id) - 1 ! current implementation limits max of nodes = pw90_berry%kmesh%mesh(3)
+          !obtaining energy eigenvalues and matrix elements
+          !parallelization by loop_z
+          if (print_output%iprint > 0) &
+            write (stdout, '(a,i0,a,i0)') "! obtaining energy eigenvalues and matrix elements... ", &
+            loop_z - displs(my_node_id) + 1, "/", counts(my_node_id)
+          do loop_x = -1, pw90_berry%kmesh%mesh(1) + 1
+            do loop_y = -1, pw90_berry%kmesh%mesh(2) + 1
+              kpt(1) = loop_x*db1 + mesh_shift*db1; kpt(2) = loop_y*db2 + mesh_shift*db2
+              !boundary of BZ
+              if (kpt(1) < 0) kpt(1) = kpt(1) + pw90_berry%kmesh%mesh(1)*db1
+              if (kpt(2) < 0) kpt(2) = kpt(2) + pw90_berry%kmesh%mesh(2)*db2
+              if (kpt(1) > pw90_berry%kmesh%mesh(1)*db1 - 0.001_dp*db1) kpt(1) = kpt(1) - pw90_berry%kmesh%mesh(1)*db1
+              if (kpt(2) > pw90_berry%kmesh%mesh(2)*db2 - 0.001_dp*db2) kpt(2) = kpt(2) - pw90_berry%kmesh%mesh(2)*db2
+              !optimized tetrahedron method(Kawamura, PRB 89 094515)
+              !1st layer for points 6, 9, 10, 13 (in Fig. 3)
+              !2nd layer for points 1, 2, 5, 14, 19, 20
+              !3rd layer for points 3, 4, 7, 16, 17, 18
+              !4th layer for points 8, 11, 12, 15
+              do i = 0, 3 ! main tetrahedra are between 2nd(i=1) and 3rd(i=2) layers
+                kpt(3) = (loop_z - 1 + i)*db3 + mesh_shift*db3
+                if (kpt(3) < 0) kpt(3) = kpt(3) + pw90_berry%kmesh%mesh(3)*db3 !boundary of BZ
+                if (kpt(3) > pw90_berry%kmesh%mesh(3)*db3 - 0.001_dp*db3) kpt(3) = kpt(3) - pw90_berry%kmesh%mesh(3)*db3 !boundary of BZ
+                if (loop_z == displs(my_node_id) .or. i == 3) then
+                  call berry_get_shc_tetrahedron(pw90_berry, ws_region, pw90_spin_hall, wannier_data, ws_distance, &
+                                                 wigner_seitz, AA_R, HH_R, SH_R, SHR_R, SR_R, SS_R, SAA_R, SBB_R, &
+                                                 kpt, imjv(:, :, loop_x + 1, loop_y + 1, i), eig(:, loop_x + 1, loop_y + 1, i), &
+                                                 real_lattice, mp_grid, num_wann, seedname, stdout, error, comm)
+                else
+                  imjv(:, :, loop_x + 1, loop_y + 1, i) = imjv(:, :, loop_x + 1, loop_y + 1, i + 1)
+                  eig(:, loop_x + 1, loop_y + 1, i) = eig(:, loop_x + 1, loop_y + 1, i + 1)
+                end if
+              end do
+            end do
+          end do
+          !summation
+          do loop_x = 0, pw90_berry%kmesh%mesh(1) - 1
+            do loop_y = 0, pw90_berry%kmesh%mesh(2) - 1
+              ! writing progress - summation is the main bottleneck
+              loop_xyz = (loop_z - displs(my_node_id))*pw90_berry%kmesh%mesh(1)*pw90_berry%kmesh%mesh(2) &
+                         + loop_x*pw90_berry%kmesh%mesh(2) + loop_y
+
+              if (print_output%iprint > 0) then ! only print from root
+                call berry_print_progress(loop_xyz, 0, counts(my_node_id)*pw90_berry%kmesh%mesh(1) &
+                                          *pw90_berry%kmesh%mesh(2) - 1, 1, stdout)
+              end if
+
+              ! setting 8 vertices and surrounding points
+              do i = 0, 3 !16*l+4*k+i+1 = 1,2,3,...,64, eight vertices of a mesh(22, 23, 26, 27, 38, 39, 42, 43) and their surrounding points
+                do k = 0, 3
+                  do l = 0, 3
+                    kptc(1, 16*l + 4*k + i + 1) = (loop_x + i - 1)*db1 + mesh_shift*db1
+                    kptc(2, 16*l + 4*k + i + 1) = (loop_y + k - 1)*db2 + mesh_shift*db2
+                    kptc(3, 16*l + 4*k + i + 1) = (loop_z + l - 1)*db3 + mesh_shift*db3
+                    imjv_tet(:, :, 16*l + 4*k + i + 1) = imjv(:, :, loop_x + i, loop_y + k, l)
+                    eig_tet(:, 16*l + 4*k + i + 1) = eig(:, loop_x + i, loop_y + k, l)
+                  end do
+                end do
+              end do
+              do itet = 1, 6 ! 6 tetrahedra
+                do i = 1, 4 ! four vertices
+                  kptv(i, :) = kptc(:, tet_array(itet, i))
+                end do
+                do i = 1, 3 ! xyz
+                  do k = 1, 3 ! three vectors forming a tetrahedron
+                    ttet(i, k) = kptv(k + 1, i) - kptv(1, i)
+                  end do
+                end do
+
+                do n = 1, num_wann
+                  do m = 1, num_wann
+                    if (n == m) cycle
+                    do i = 1, 20 ! four vertices + 16 points for optimization
+                      F_opt(i) = imjv_tet(n, m, tet_array(itet, i))
+                      E1_opt(i) = eig_tet(n, tet_array(itet, i))
+                      E2_opt(i) = eig_tet(m, tet_array(itet, i))
+                    end do
+
+                    E1tet = 0.0_dp
+                    E2tet = 0.0_dp
+                    Ftet = 0.0_dp
+                    do i = 1, 4
+                      do k = 1, 20 !Eq. (16) of Kawamura, PRB 89 094515
+                        E1tet(i) = E1tet(i) + P_matrix(i, k)*E1_opt(k)
+                        E2tet(i) = E2tet(i) + P_matrix(i, k)*E2_opt(k)
+                        Ftet(i) = Ftet(i) + P_matrix(i, k)*F_opt(k)
+                      end do
+                    end do
+
+                    ! do i = 1, 4
+                    !   Ftet(i) = imjv_tet(n, m, tet_array(itet, i))
+                    !   E1tet(i) = eig_tet(n, tet_array(itet, i))
+                    !   E2tet(i) = eig_tet(m, tet_array(itet, i))
+                    ! enddo
+                    do ifreq = 1, nfreq !fermiscan or freqscan
+                      if (.not. pw90_spin_hall%freq_scan) then
+                        omega = real(pw90_berry%kubo_freq_list(1), dp)
+                        Ef = fermi_energy_list(ifreq)
+                      else
+                        omega = real(pw90_berry%kubo_freq_list(ifreq), dp)
+                        Ef = fermi_energy_list(1)
+                      end if
+
+                      if (omega == 0.0) then
+                        shc_k_tet = &
+                          tetrahedron_spinhall(Ftet, E1tet, E2tet, ttet, &
+                                               0.0_dp, Ef, 3, pw90_berry%tetrahedron_cutoff, &
+                                               pw90_berry%tetrahedron_avoid_degeneracy)
+                      else
+                        shc_k_tet = &
+                          (tetrahedron_spinhall(Ftet, E1tet, E2tet, ttet, &
+                                                -omega, Ef, 1, pw90_berry%tetrahedron_cutoff, &
+                                                pw90_berry%tetrahedron_avoid_degeneracy) &
+                           - tetrahedron_spinhall(Ftet, E1tet, E2tet, ttet, &
+                                                  omega, Ef, 1, pw90_berry%tetrahedron_cutoff, &
+                                                  pw90_berry%tetrahedron_avoid_degeneracy)) &
+                          /(2.0_dp*omega) + (cmplx_i*pi* &
+                                             (tetrahedron_spinhall(Ftet, E1tet, E2tet, ttet, &
+                                                                   -omega, Ef, 2, pw90_berry%tetrahedron_cutoff, &
+                                                                   pw90_berry%tetrahedron_avoid_degeneracy) &
+                                              + tetrahedron_spinhall(Ftet, E1tet, E2tet, ttet, &
+                                                                     omega, Ef, 2, pw90_berry%tetrahedron_cutoff, &
+                                                                     pw90_berry%tetrahedron_avoid_degeneracy))) &
+                          /(2.0_dp*omega)
+                      end if
+
+                      if (.not. pw90_spin_hall%freq_scan) then
+                        shc_fermi(ifreq) = shc_fermi(ifreq) - real(shc_k_tet, dp)
+                      else
+                        shc_freq(ifreq) = shc_freq(ifreq) - shc_k_tet
+                      end if
+                    end do !ifreq
+                  end do ! m
+                end do ! n
+              end do ! itet
+            end do ! loop_y for summation
+          end do ! loop_x for summation
+        end do ! loop_z
+      end if
     end if !wanint_kpoint_file
 
     ! Collect contributions from all nodes
@@ -961,7 +1197,7 @@ contains
       if (allocated(error)) return
       call comms_reduce(adpt_counter_list(1), fermi_n, 'SUM', error, comm)
       if (allocated(error)) return
-    endif
+    end if
 
     if (eval_morb) then
       call comms_reduce(imf_list2(1, 1, 1), 3*3*fermi_n, 'SUM', error, comm)
@@ -986,8 +1222,8 @@ contains
         if (allocated(error)) return
         call comms_reduce(jdos_spn(1, 1), 3*pw90_berry%kubo_nfreq, 'SUM', error, comm)
         if (allocated(error)) return
-      endif
-    endif
+      end if
+    end if
 
     if (eval_sc) then
       call comms_reduce(sc_list(1, 1, 1), 3*6*pw90_berry%kubo_nfreq, 'SUM', error, comm)
@@ -1023,7 +1259,7 @@ contains
           write (stdout, '(1x,a28,a17,f6.2,a)') &
             'Refinement threshold: ', 'Berry curvature >', &
             pw90_berry%curv_adpt_kmesh_thresh, ' bohr^2'
-        endif
+        end if
         if (fermi_n == 1) then
           if (pw90_berry%wanint_kpoint_file) then
             write (stdout, '(1x,a30,i5,a,f5.2,a)') &
@@ -1036,8 +1272,8 @@ contains
               ' Points triggering refinement: ', &
               adpt_counter_list(1), '(', &
               100*real(adpt_counter_list(1), dp)/product(pw90_berry%kmesh%mesh), '%)'
-          endif
-        endif
+          end if
+        end if
       elseif (eval_shc) then
         if (pw90_berry%curv_adpt_kmesh .ne. 1) then
           if (.not. pw90_berry%wanint_kpoint_file) write (stdout, '(1x,a28,3(i0,1x))') &
@@ -1054,7 +1290,7 @@ contains
               write (stdout, '(1x,a28,f12.2,a)') &
                 'Refinement threshold: ', &
                 pw90_berry%curv_adpt_kmesh_thresh, ' bohr^2'
-            endif
+            end if
             if (pw90_berry%wanint_kpoint_file) then
               write (stdout, '(1x,a30,i8,a,f6.2,a)') &
                 ' Points triggering refinement: ', adpt_counter_list(1), '(', &
@@ -1063,12 +1299,12 @@ contains
               write (stdout, '(1x,a30,i8,a,f6.2,a)') &
                 ' Points triggering refinement: ', adpt_counter_list(1), '(', &
                 100*real(adpt_counter_list(1), dp)/product(pw90_berry%kmesh%mesh), '%)'
-            endif
-          endif
+            end if
+          end if
         else
           if (.not. pw90_berry%wanint_kpoint_file) write (stdout, &
                                                           '(1x,a20,3(i0,1x))') 'Interpolation grid: ', pw90_berry%kmesh%mesh(1:3)
-        endif
+        end if
         write (stdout, '(a)') ''
         if (pw90_berry%kubo_smearing%use_adaptive) then
           write (stdout, '(1x,a)') 'Using adaptive smearing'
@@ -1080,20 +1316,20 @@ contains
           write (stdout, '(1x,a)') 'Using fixed smearing'
           write (stdout, '(7x,a,f8.3,a)') 'fixed smearing width ', &
             pw90_berry%kubo_smearing%fixed_width, ' eV'
-        endif
+        end if
         write (stdout, '(a)') ''
         if (abs(scissors_shift) > 1.0e-7_dp) then
           write (stdout, '(1X,A,I0,A,G18.10,A)') "Using scissors_shift to shift energy bands with index > ", &
             num_valence_bands, " by ", scissors_shift, " eV."
-        endif
+        end if
         if (pw90_spin_hall%bandshift) then
           write (stdout, '(1X,A,I0,A,G18.10,A)') "Using shc_bandshift to shift energy bands with index >= ", &
             pw90_spin_hall%bandshift_firstband, " by ", pw90_spin_hall%bandshift_energyshift, " eV."
-        endif
+        end if
       else
         if (.not. pw90_berry%wanint_kpoint_file) write (stdout, &
                                                         '(1x,a20,3(i0,1x))') 'Interpolation grid: ', pw90_berry%kmesh%mesh(1:3)
-      endif
+      end if
 
       if (eval_ahc) then
         !
@@ -1137,9 +1373,8 @@ contains
             '---------------------------------'
           file_name = trim(seedname)//'-ahc-fermiscan.dat'
           write (stdout, '(/,3x,a)') '* '//file_name
-          file_unit = io_file_unit()
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
-        endif
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        end if
         do if = 1, fermi_n
           if (fermi_n > 1) write (file_unit, '(4(F12.6,1x))') &
             fermi_energy_list(if), sum(ahc_list(:, 1, if)), &
@@ -1159,8 +1394,8 @@ contains
                 adpt_counter_list(if), '(', &
                 100*real(adpt_counter_list(if), dp) &
                 /product(pw90_berry%kmesh%mesh), '%)'
-            endif
-          endif
+            end if
+          end if
           write (stdout, '(/,1x,a)') &
             'AHC (S/cm)       x          y          z'
           if (print_output%iprint > 1) then
@@ -1181,10 +1416,10 @@ contains
             write (stdout, '(1x,a10,1x,3(f10.4,1x),/)') '==========', &
               sum(ahc_list(:, 1, if)), sum(ahc_list(:, 2, if)), &
               sum(ahc_list(:, 3, if))
-          endif
-        enddo
+          end if
+        end do
         if (fermi_n > 1) close (file_unit)
-      endif
+      end if
 
       if (eval_morb) then
         !
@@ -1224,9 +1459,8 @@ contains
             '---------------------------------'
           file_name = trim(seedname)//'-morb-fermiscan.dat'
           write (stdout, '(/,3x,a)') '* '//file_name
-          file_unit = io_file_unit()
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
-        endif
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        end if
         do if = 1, fermi_n
           LCtil_list(:, :, if) = (img_list(:, :, if) &
                                   - fermi_energy_list(if)*imf_list2(:, :, if))*fac
@@ -1243,27 +1477,27 @@ contains
           if (print_output%iprint > 1) then
             write (stdout, '(1x,a)') &
               '======================'
-            write (stdout, '(1x,a22,2x,3(f10.4,1x))') 'Local circulation :', &
+            write (stdout, '(1x,a22,2x,3(f16.10,1x))') 'Local circulation :', &
               sum(LCtil_list(1:3, 1, if)), sum(LCtil_list(1:3, 2, if)), &
               sum(LCtil_list(1:3, 3, if))
-            write (stdout, '(1x,a22,2x,3(f10.4,1x))') &
+            write (stdout, '(1x,a22,2x,3(f16.10,1x))') &
               'Itinerant circulation:', &
               sum(ICtil_list(1:3, 1, if)), sum(ICtil_list(1:3, 2, if)), &
               sum(ICtil_list(1:3, 3, if))
             write (stdout, '(1x,a)') &
               '--------------------------------------------------------'
-            write (stdout, '(1x,a22,2x,3(f10.4,1x),/)') 'Total   :', &
+            write (stdout, '(1x,a22,2x,3(f16.10,1x),/)') 'Total   :', &
               sum(Morb_list(1:3, 1, if)), sum(Morb_list(1:3, 2, if)), &
               sum(Morb_list(1:3, 3, if))
           else
-            write (stdout, '(1x,a22,2x,3(f10.4,1x),/)') &
+            write (stdout, '(1x,a22,2x,3(f16.10,1x),/)') &
               '======================', &
               sum(Morb_list(1:3, 1, if)), sum(Morb_list(1:3, 2, if)), &
               sum(Morb_list(1:3, 3, if))
-          endif
-        enddo
+          end if
+        end do
         if (fermi_n > 1) close (file_unit)
-      endif
+      end if
 
       ! -----------------------------!
       ! Complex optical conductivity !
@@ -1278,7 +1512,7 @@ contains
         if (spin_decomp) then
           kubo_H_spn = kubo_H_spn*fac
           kubo_AH_spn = kubo_AH_spn*fac
-        endif
+        end if
         !
         write (stdout, '(/,1x,a)') &
           '----------------------------------------------------------'
@@ -1295,9 +1529,8 @@ contains
           file_name = trim(seedname)//'-kubo_S_'// &
                       achar(119 + i)//achar(119 + j)//'.dat'
           file_name = trim(file_name)
-          file_unit = io_file_unit()
           write (stdout, '(/,3x,a)') '* '//file_name
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
           do ifreq = 1, pw90_berry%kubo_nfreq
             if (spin_decomp) then
               write (file_unit, '(9E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
@@ -1319,10 +1552,10 @@ contains
               write (file_unit, '(3E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
                 real(0.5_dp*(kubo_H(i, j, ifreq) + kubo_H(j, i, ifreq)), dp), &
                 aimag(0.5_dp*(kubo_AH(i, j, ifreq) + kubo_AH(j, i, ifreq)))
-            endif
-          enddo
+            end if
+          end do
           close (file_unit)
-        enddo
+        end do
         !
         ! Antisymmetric: real (imaginary) part is anti-Hermitean (Hermitean)
         !
@@ -1332,9 +1565,8 @@ contains
           file_name = trim(seedname)//'-kubo_A_'// &
                       achar(119 + i)//achar(119 + j)//'.dat'
           file_name = trim(file_name)
-          file_unit = io_file_unit()
           write (stdout, '(/,3x,a)') '* '//file_name
-          open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+          open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
           do ifreq = 1, pw90_berry%kubo_nfreq
             if (spin_decomp) then
               write (file_unit, '(9E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
@@ -1356,17 +1588,16 @@ contains
               write (file_unit, '(3E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
                 real(0.5_dp*(kubo_AH(i, j, ifreq) - kubo_AH(j, i, ifreq)), dp), &
                 aimag(0.5_dp*(kubo_H(i, j, ifreq) - kubo_H(j, i, ifreq)))
-            endif
-          enddo
+            end if
+          end do
           close (file_unit)
-        enddo
+        end do
         !
         ! Joint density of states
         !
         file_name = trim(seedname)//'-jdos.dat'
         write (stdout, '(/,3x,a)') '* '//file_name
-        file_unit = io_file_unit()
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         do ifreq = 1, pw90_berry%kubo_nfreq
           if (spin_decomp) then
             write (file_unit, '(5E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
@@ -1374,10 +1605,10 @@ contains
           else
             write (file_unit, '(2E16.8)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
               jdos(ifreq)
-          endif
-        enddo
+          end if
+        end do
         close (file_unit)
-      endif
+      end if
 
       if (eval_sc) then
         ! -----------------------------!
@@ -1430,18 +1661,17 @@ contains
             file_name = trim(seedname)//'-sc_'// &
                         achar(119 + i)//achar(119 + j)//achar(119 + k)//'.dat'
             file_name = trim(file_name)
-            file_unit = io_file_unit()
             write (stdout, '(/,3x,a)') '* '//file_name
-            open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+            open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
             do ifreq = 1, pw90_berry%kubo_nfreq
               write (file_unit, '(2E18.8E3)') real(pw90_berry%kubo_freq_list(ifreq), dp), &
                 fac*sc_list(i, jk, ifreq)
-            enddo
+            end do
             close (file_unit)
-          enddo
-        enddo
+          end do
+        end do
 
-      endif
+      end if
 
       ! -----------------------!
       ! Spin Hall conductivity !
@@ -1467,7 +1697,7 @@ contains
           shc_freq = shc_freq*fac
         else
           shc_fermi = shc_fermi*fac
-        endif
+        end if
         !
         write (stdout, '(/,1x,a)') &
           '----------------------------------------------------------'
@@ -1480,29 +1710,28 @@ contains
           file_name = trim(seedname)//'-shc-fermiscan'//'.dat'
         else
           file_name = trim(seedname)//'-shc-freqscan'//'.dat'
-        endif
+        end if
         file_name = trim(file_name)
-        file_unit = io_file_unit()
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         if (.not. pw90_spin_hall%freq_scan) then
           write (file_unit, '(a,3x,a,3x,a)') &
             '#No.', 'Fermi energy(eV)', 'SHC((hbar/e)*S/cm)'
           do n = 1, fermi_n
             write (file_unit, '(I4,1x,F12.6,1x,E17.8)') &
               n, fermi_energy_list(n), shc_fermi(n)
-          enddo
+          end do
         else
           write (file_unit, '(a,3x,a,3x,a,3x,a)') '#No.', 'Frequency(eV)', &
             'Re(sigma)((hbar/e)*S/cm)', 'Im(sigma)((hbar/e)*S/cm)'
           do n = 1, pw90_berry%kubo_nfreq
             write (file_unit, '(I4,1x,F12.6,1x,1x,2(E17.8,1x))') n, &
               real(pw90_berry%kubo_freq_list(n), dp), real(shc_freq(n), dp), aimag(shc_freq(n))
-          enddo
-        endif
+          end do
+        end if
         close (file_unit)
 
-      endif
+      end if
 
       if (eval_kdotp) then
         ! -----------------------------!
@@ -1518,16 +1747,15 @@ contains
         ! zeroth order in k
         file_name = trim(seedname)//'-kdotp_0.dat'
         file_name = trim(file_name)
-        file_unit = io_file_unit()
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         write (file_unit, '(2E18.8E3)') kdotp(:, :, 1, 1, 1)
         close (file_unit)
 
         ! first order in k
         file_name = trim(seedname)//'-kdotp_1.dat'
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         do i = 1, 3
           write (file_unit, '(2E18.8E3)') kdotp(:, :, 2, i, 1)
         end do
@@ -1536,7 +1764,7 @@ contains
         ! second order in k
         file_name = trim(seedname)//'-kdotp_2.dat'
         write (stdout, '(/,3x,a)') '* '//file_name
-        open (file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
+        open (newunit=file_unit, FILE=file_name, STATUS='UNKNOWN', FORM='FORMATTED')
         do i = 1, 3
           do j = 1, 3
             write (file_unit, '(2E18.8E3)') kdotp(:, :, 3, i, j)
@@ -1566,8 +1794,8 @@ contains
     !================================================!
 
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, ws_region_type, ws_distance_type, timer_list_type
-    use w90_comms, only: w90comm_type
+                         dis_manifold_type, ws_region_type, ws_distance_type, timer_list_type
+    use w90_comms, only: w90_comm_type
     use w90_postw90_types, only: wigner_seitz_type
 
     implicit none
@@ -1578,7 +1806,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -1641,8 +1869,8 @@ contains
                                    seedname, stdout, timer, error, comm, imf_k_list)
         if (allocated(error)) return
 
-      endif
-    endif
+      end if
+    end if
 
   end subroutine berry_get_imf_klist
 
@@ -1672,10 +1900,10 @@ contains
     !
     !================================================!
 
-    use w90_comms, only: w90comm_type, mpirank
+    use w90_comms, only: w90_comm_type, mpirank
     use w90_constants, only: dp, cmplx_i
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_common, only: pw90common_fourier_R_to_k_vec, pw90common_fourier_R_to_k
     use w90_postw90_types, only: wigner_seitz_type
     use w90_utility, only: utility_re_tr_prod, utility_im_tr_prod, utility_zgemm_new
@@ -1689,7 +1917,7 @@ contains
     real(kind=dp), intent(in) :: kpt_latt(:, :)
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -1746,13 +1974,13 @@ contains
       nfermi_loc = 1
     else
       nfermi_loc = fermi_n
-    endif
+    end if
 
     if (present(ladpt)) then
       todo = ladpt
     else
       todo = .true.
-    endif
+    end if
 
     allocate (HH(num_wann, num_wann))
     allocate (UU(num_wann, num_wann))
@@ -1792,7 +2020,7 @@ contains
                                  eig=eig)
       if (allocated(error)) return
 
-    endif
+    end if
 
     call pw90common_fourier_R_to_k_vec(ws_region, wannier_data, ws_distance, wigner_seitz, AA_R, &
                                        kpt, real_lattice, mp_grid, num_wann, error, comm, &
@@ -1821,7 +2049,7 @@ contains
             imf_k_list(3, i, ife) = -2.0_dp* &
                                     utility_im_tr_prod(JJm_list(:, :, ife, alpha_A(i)), JJp_list(:, :, ife, beta_A(i)))
           end do
-        endif
+        end if
       end do
     end if
 
@@ -1936,15 +2164,15 @@ contains
     !================================================!
 
     use w90_constants, only: dp, cmplx_0, cmplx_i, pi
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
     use w90_utility, only: utility_diagonalize, utility_rotate, utility_w0gauss, &
-      utility_recip_lattice_base
+                           utility_recip_lattice_base
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_mod_type, &
-      pw90_band_deriv_degen_type, wigner_seitz_type
+                                 pw90_band_deriv_degen_type, wigner_seitz_type
     use w90_postw90_common, only: pw90common_get_occ, pw90common_fourier_R_to_k_new, &
-      pw90common_fourier_R_to_k_vec, pw90common_kmesh_spacing
+                                  pw90common_fourier_R_to_k_vec, pw90common_kmesh_spacing
     use w90_spin, only: spin_get_nk
     use w90_wan_ham, only: wham_get_D_h, wham_get_eig_deleig
 
@@ -1959,7 +2187,7 @@ contains
     type(pw90_spin_mod_type), intent(in) :: pw90_spin
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -2034,7 +2262,7 @@ contains
 
       call utility_diagonalize(HH, num_wann, eig, UU, error, comm)
       if (allocated(error)) return
-    endif
+    end if
     call pw90common_get_occ(fermi_energy_list(1), eig, occ, num_wann)
 
     call wham_get_D_h(delHH, D_h, UU, eig, num_wann)
@@ -2046,7 +2274,7 @@ contains
 
     do i = 1, 3
       AA(:, :, i) = utility_rotate(AA(:, :, i), UU, num_wann)
-    enddo
+    end do
     AA = AA + cmplx_i*D_h ! Eq.(25) WYSV06
 
     ! Replace imaginary part of frequency with a fixed value
@@ -2087,7 +2315,7 @@ contains
                         pw90_berry%kubo_smearing%adaptive_max_width)
         else
           eta_smr = pw90_berry%kubo_smearing%fixed_width
-        endif
+        end if
         rfac1 = (occ(m) - occ(n))*(eig(m) - eig(n))
         occ_prod = occ(n)*(1.0_dp - occ(m))
         do ifreq = 1, pw90_berry%kubo_nfreq
@@ -2098,7 +2326,7 @@ contains
             omega = real(pw90_berry%kubo_freq_list(ifreq), dp) + cmplx_i*eta_smr
           else
             omega = pw90_berry%kubo_freq_list(ifreq)
-          endif
+          end if
           !
           ! Broadened delta function for the Hermitian conductivity and JDOS
           !
@@ -2130,12 +2358,12 @@ contains
                 kubo_AH_k_spn(i, j, ispn, ifreq) = &
                   kubo_AH_k_spn(i, j, ispn, ifreq) &
                   + cfac*AA(n, m, i)*AA(m, n, j)
-              endif
-            enddo
-          enddo
-        enddo
-      enddo
-    enddo
+              end if
+            end do
+          end do
+        end do
+      end do
+    end do
 
   end subroutine berry_get_kubo_k
 
@@ -2165,15 +2393,15 @@ contains
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_utility, only: utility_re_tr, utility_im_tr, utility_w0gauss, utility_w0gauss_vec
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_band_deriv_degen_type, wigner_seitz_type
     use w90_postw90_common, only: pw90common_fourier_R_to_k_vec_dadb, &
-      pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
-      pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv
+                                  pw90common_fourier_R_to_k_new_second_d, pw90common_get_occ, &
+                                  pw90common_kmesh_spacing, pw90common_fourier_R_to_k_vec_dadb_TB_conv
     use w90_wan_ham, only: wham_get_D_h, &
-      wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
-      wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
-    use w90_comms, only: w90comm_type
+                           wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, wham_get_D_h_P_value, &
+                           wham_get_eig_deleig_TB_conv, wham_get_eig_UU_HH_AA_sc_TB_conv
+    use w90_comms, only: w90_comm_type
     use w90_utility, only: utility_rotate, utility_zdotu, utility_recip_lattice_base
 
     implicit none
@@ -2185,7 +2413,7 @@ contains
     type(pw90_band_deriv_degen_type), intent(in) :: pw90_band_deriv_degen
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -2315,7 +2543,7 @@ contains
     if (pw90_berry%kubo_smearing%use_adaptive) then
       call utility_recip_lattice_base(real_lattice, recip_lattice, volume)
       Delta_k = pw90common_kmesh_spacing(pw90_berry%kmesh%mesh, recip_lattice)
-    endif
+    end if
 
     ! rotate quantities from W to H gauge (we follow wham_get_D_h for delHH_bar_i)
     do a = 1, 3
@@ -2328,8 +2556,8 @@ contains
         AA_da_bar(:, :, a, b) = utility_rotate(AA_da(:, :, a, b), UU, num_wann)
         ! second derivative of Hamiltonian d^{2}H_dadb
         HH_dadb_bar(:, :, a, b) = utility_rotate(HH_dadb(:, :, a, b), UU, num_wann)
-      enddo
-    enddo
+      end do
+    end do
 
     ! setup for frequency-related quantities
     omega = real(pw90_berry%kubo_freq_list(:), dp)
@@ -2355,7 +2583,7 @@ contains
                         pw90_berry%kubo_smearing%adaptive_max_width)
         else
           eta_smr = pw90_berry%kubo_smearing%fixed_width
-        endif
+        end if
 
         ! restrict to energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
         ! outside this range, the two delta functions are virtually zero
@@ -2377,8 +2605,8 @@ contains
                            - (utility_zdotu(D_h(n, :, a), AA_bar(:, m, c)) - D_h(n, m, a)*AA_bar(m, m, c))
             sum_HD(c, a) = (utility_zdotu(HH_da_bar(n, :, c), D_h(:, m, a)) - HH_da_bar(n, n, c)*D_h(n, m, a)) &
                            - (utility_zdotu(D_h(n, :, a), HH_da_bar(:, m, c)) - D_h(n, m, a)*HH_da_bar(m, m, c))
-          enddo
-        enddo
+          end do
+        end do
 
         ! dipole matrix element
         r_mn(:) = AA_bar(m, n, :) + cmplx_i*D_h_no_eta(m, n, :)
@@ -2414,8 +2642,8 @@ contains
                                                     + pw90_berry%sc_eta**2)/(eig(n) - eig(m)) &
                             *(HH_da_bar(n, p, a)*AA_bar(p, m, :) &
                               - AA_bar(n, p, a)*(HH_da_bar(p, m, :) + cmplx_i*(eig(p) - eig(m))*AA_bar(p, m, :)))
-            enddo
-          endif
+            end do
+          end if
 
           ! loop over the remaining two indexes of the matrix product.
           ! Note that shift current is symmetric under b <--> c exchange,
@@ -2424,8 +2652,8 @@ contains
             b = alpha_S(bc)
             c = beta_S(bc)
             I_nm(a, bc) = aimag(r_mn(b)*gen_r_nm(c) + r_mn(c)*gen_r_nm(b))
-          enddo ! bc
-        enddo ! a
+          end do ! bc
+        end do ! a
 
         ! compute delta(E_nm-w)
         ! choose energy window spanning [-sc_w_thr*eta_smr,+sc_w_thr*eta_smr]
@@ -2439,7 +2667,7 @@ contains
                                 pw90_berry%kubo_smearing%type_index, error, comm)/eta_smr
           if (allocated(error)) return
           call DGER(18, iend - istart + 1, occ_fac, I_nm, 1, delta(istart:iend), 1, sc_k_list(:, :, istart:iend), 18)
-        endif
+        end if
         ! same for delta(E_mn-w)
         istart = max(int((eig(m) - eig(n) - pw90_berry%sc_w_thr*eta_smr - wmin)/wstep + 1), 1)
         iend = min(int((eig(m) - eig(n) + pw90_berry%sc_w_thr*eta_smr - wmin)/wstep + 1), pw90_berry%kubo_nfreq)
@@ -2450,10 +2678,10 @@ contains
                                 pw90_berry%kubo_smearing%type_index, error, comm)/eta_smr
           if (allocated(error)) return
           call DGER(18, iend - istart + 1, occ_fac, I_nm, 1, delta(istart:iend), 1, sc_k_list(:, :, istart:iend), 18)
-        endif
+        end if
 
-      enddo ! bands
-    enddo ! bands
+      end do ! bands
+    end do ! bands
 
   end subroutine berry_get_sc_klist
 
@@ -2490,13 +2718,13 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_utility, only: utility_rotate, utility_recip_lattice_base
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_hall_type, &
-      pw90_band_deriv_degen_type, wigner_seitz_type
+                                 pw90_band_deriv_degen_type, wigner_seitz_type
     use w90_postw90_common, only: pw90common_get_occ, pw90common_fourier_R_to_k_vec, &
-      pw90common_kmesh_spacing
+                                  pw90common_kmesh_spacing
     use w90_wan_ham, only: wham_get_D_h, wham_get_eig_deleig
 
     implicit none
@@ -2510,7 +2738,7 @@ contains
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
     type(pw90_spin_hall_type), intent(in) :: pw90_spin_hall
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -2578,15 +2806,15 @@ contains
     if (present(shc_k_freq)) then
       shc_k_freq = 0.0_dp
       lfreq = .true.
-    endif
+    end if
     if (present(shc_k_fermi)) then
       shc_k_fermi = 0.0_dp
       lfermi = .true.
-    endif
+    end if
     if (present(shc_k_band)) then
       shc_k_band = 0.0_dp
       lband = .true.
-    endif
+    end if
 
     call wham_get_eig_deleig(dis_manifold, kpt_latt, pw90_band_deriv_degen, ws_region, &
                              print_output, wannier_data, ws_distance, wigner_seitz, delHH, HH, &
@@ -2610,7 +2838,7 @@ contains
 
     do i = 1, 3
       AA(:, :, i) = utility_rotate(AA(:, :, i), UU, num_wann)
-    enddo
+    end do
     AA = AA + cmplx_i*D_h ! Eq.(25) WYSV06
 
     call berry_get_js_k(ws_region, pw90_spin_hall, wannier_data, ws_distance, wigner_seitz, &
@@ -2618,12 +2846,12 @@ contains
                         SBB_R, UU, eig, del_eig(:, pw90_spin_hall%alpha), &
                         delHH(:, :, pw90_spin_hall%alpha), kpt, real_lattice, mp_grid, num_wann)
 
-    ! adpt_smr only works with pw90_berry_kmesh, so do not use
+    ! adpt_smr only works with pw90_pw90_berry%kmesh%mesh, so do not use
     ! adpt_smr in kpath or kslice plots.
     if (pw90_berry%kubo_smearing%use_adaptive) then
       call utility_recip_lattice_base(real_lattice, recip_lattice, volume)
       Delta_k = pw90common_kmesh_spacing(pw90_berry%kmesh%mesh, recip_lattice)
-    endif
+    end if
     if (lfreq) then
       call pw90common_get_occ(fermi_energy_list(1), eig, occ_freq, num_wann)
     elseif (lfermi) then
@@ -2655,7 +2883,7 @@ contains
                         pw90_berry%kubo_smearing%adaptive_max_width)
         else
           eta_smr = pw90_berry%kubo_smearing%fixed_width
-        endif
+        end if
         if (lfreq) then
           do ifreq = 1, pw90_berry%kubo_nfreq
             cdum = real(pw90_berry%kubo_freq_list(ifreq), dp) + cmplx_i*eta_smr
@@ -2666,7 +2894,7 @@ contains
           rfac = -2.0_dp/(rfac**2 + eta_smr**2)
           omega = omega + rfac*aimag(prod)
         end if
-      enddo
+      end do
 
       if (lfermi) then
         do i = 1, fermi_n
@@ -2677,7 +2905,7 @@ contains
       else if (lband) then
         shc_k_band(n) = omega
       end if
-    enddo
+    end do
 
     !if (lfermi) then
     !  write (*, '(3(f9.6,1x),f16.8,1x,1E16.8)') &
@@ -2708,7 +2936,7 @@ contains
       use w90_constants, only: dp, cmplx_0, cmplx_i
       use w90_utility, only: utility_rotate
       use w90_types, only: print_output_type, wannier_data_type, ws_region_type, &
-        ws_distance_type
+                           ws_distance_type
       use w90_postw90_types, only: pw90_spin_hall_type, wigner_seitz_type
       use w90_postw90_common, only: pw90common_fourier_R_to_k_new, pw90common_fourier_R_to_k_vec
 
@@ -2866,14 +3094,191 @@ contains
             js_k(n, m) = js_k(n, m) &
                          + cmplx_i*(eig(n)*conjg(SAA(m, n, pw90_spin_hall%gamma, pw90_spin_hall%alpha)) &
                                     - conjg(SBB(m, n, pw90_spin_hall%gamma, pw90_spin_hall%alpha)))
-          enddo
-        enddo
+          end do
+        end do
         js_k = js_k/2.0_dp
-      endif
+      end if
 
     end subroutine berry_get_js_k
 
   end subroutine berry_get_shc_klist
+
+  subroutine berry_get_shc_tetrahedron(pw90_berry, ws_region, pw90_spin_hall, wannier_data, ws_distance, &
+                                       wigner_seitz, AA_R, HH_R, SH_R, SHR_R, SR_R, SS_R, SAA_R, SBB_R, &
+                                       kpt, imjv, eig_out, real_lattice, mp_grid, num_wann, &
+                                       seedname, stdout, error, comm)
+
+    !====================================================================!
+    ! returns the values used for calculating the SHC Kubo formula       !
+    ! imjv = Im [j^{z}_{x,nmk} * v_{y,nmk}]                              !
+    ! eig_out = energy eigenvalues                                       !
+    !====================================================================!
+    use w90_constants, only: dp, cmplx_0, cmplx_i
+    use w90_utility, only: utility_diagonalize, utility_rotate
+    use w90_error, only: w90_error_type
+    use w90_comms, only: w90_comm_type
+    use w90_types, only: print_output_type, wannier_data_type, ws_region_type, &
+                         ws_distance_type
+    use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_hall_type, wigner_seitz_type
+    use w90_postw90_common, only: pw90common_fourier_R_to_k_new, pw90common_fourier_R_to_k_vec
+
+    ! arguments
+    type(pw90_berry_mod_type), intent(in) :: pw90_berry
+    type(ws_region_type), intent(in) :: ws_region
+    type(pw90_spin_hall_type), intent(in) :: pw90_spin_hall
+    type(wannier_data_type), intent(in) :: wannier_data
+    type(wigner_seitz_type), intent(inout) :: wigner_seitz
+    type(ws_distance_type), intent(inout) :: ws_distance
+    type(w90_error_type), allocatable, intent(out) :: error
+    type(w90_comm_type), intent(in) :: comm
+
+    integer, intent(in) :: num_wann
+    integer, intent(in) :: mp_grid(3)
+    integer, intent(in) :: stdout
+
+    real(kind=dp), intent(in) :: kpt(3)
+    real(kind=dp), intent(in) :: real_lattice(3, 3)
+    real(kind=dp), dimension(:, :), intent(out) :: imjv
+    real(kind=dp), dimension(:), intent(out) :: eig_out
+    complex(kind=dp), allocatable, intent(inout) :: AA_R(:, :, :, :) ! <0n|r|Rm>
+    complex(kind=dp), allocatable, intent(inout) :: HH_R(:, :, :) !  <0n|r|Rm>
+    complex(kind=dp), allocatable, intent(inout) :: SR_R(:, :, :, :, :) ! <0n|sigma_x,y,z.(r-R)_alpha|Rm>
+    complex(kind=dp), allocatable, intent(inout) :: SHR_R(:, :, :, :, :) ! <0n|sigma_x,y,z.H.(r-R)_alpha|Rm>
+    complex(kind=dp), allocatable, intent(inout) :: SH_R(:, :, :, :) ! <0n|sigma_x,y,z.H|Rm>
+    complex(kind=dp), allocatable, intent(inout) :: SS_R(:, :, :, :) ! <0n|sigma_x,y,z|Rm>
+    complex(kind=dp), allocatable, intent(inout) :: SAA_R(:, :, :, :, :)
+    complex(kind=dp), allocatable, intent(inout) :: SBB_R(:, :, :, :, :)
+
+    character(len=50), intent(in) :: seedname
+
+    ! internal vars
+    complex(kind=dp), allocatable :: HH(:, :)
+    complex(kind=dp), allocatable :: delHH(:, :, :)
+    complex(kind=dp), allocatable :: UU(:, :)
+    complex(kind=dp), allocatable :: VV0(:, :, :)
+    complex(kind=dp), allocatable :: VV(:, :, :)
+    complex(kind=dp), allocatable :: AA(:, :, :)
+    complex(kind=dp), allocatable :: SS(:, :, :)
+    complex(kind=dp), allocatable :: spinVel0(:, :, :, :), spinVel(:, :, :, :)
+
+    complex(kind=dp), allocatable :: SAA(:, :, :, :)
+    complex(kind=dp), allocatable :: SBB(:, :, :, :)
+
+    integer          :: i, j, n, m
+    real(kind=dp)    :: eig(num_wann), occ(num_wann)
+
+    allocate (HH(num_wann, num_wann))
+    allocate (delHH(num_wann, num_wann, 3))
+    allocate (UU(num_wann, num_wann))
+    allocate (VV(num_wann, num_wann, 3))
+    allocate (VV0(num_wann, num_wann, 3))
+    allocate (AA(num_wann, num_wann, 3))
+    allocate (SS(num_wann, num_wann, 3))
+    allocate (spinVel0(num_wann, num_wann, 3, 3))
+    allocate (spinVel(num_wann, num_wann, 3, 3))
+    allocate (SAA(num_wann, num_wann, 3, 3))
+    allocate (SBB(num_wann, num_wann, 3, 3))
+
+    call pw90common_fourier_R_to_k_new(ws_region, wannier_data, ws_distance, wigner_seitz, &
+                                       HH_R, kpt, real_lattice, &
+                                       mp_grid, num_wann, error, comm, OO=HH, &
+                                       OO_dx=delHH(:, :, 1), &
+                                       OO_dy=delHH(:, :, 2), &
+                                       OO_dz=delHH(:, :, 3))
+    if (allocated(error)) return
+!   call wham_get_eig_deleig(dis_manifold, kpt_latt, pw90_band_deriv_degen, ws_region, print_output, wannier_data, &
+!                                       ws_distance, wigner_seitz, delHH, HH, HH_R, u_matrix, UU, v_matrix, &
+!                                       del_eig, eig, eigval, kpt, real_lattice, scissors_shift, mp_grid, &
+!                                       num_bands, num_kpts, num_wann, num_valence_bands, effective_model, &
+!                                       have_disentangled, timer, error, comm)
+    call utility_diagonalize(HH, num_wann, eig, UU, error, comm)
+    call pw90common_fourier_R_to_k_vec(ws_region, wannier_data, ws_distance, wigner_seitz, &
+                                       AA_R, kpt, &
+                                       real_lattice, mp_grid, num_wann, &
+                                       error, comm, OO_true=AA)
+    call pw90common_fourier_R_to_k_vec(ws_region, wannier_data, ws_distance, wigner_seitz, &
+                                       SS_R, kpt, &
+                                       real_lattice, mp_grid, num_wann, &
+                                       error, comm, OO_true=SS)
+
+    if (index(pw90_spin_hall%method, 'ryoo') > 0) then
+      call pw90common_fourier_R_to_k_new(ws_region, wannier_data, ws_distance, wigner_seitz, &
+                                         SAA_R(:, :, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha), &
+                                         kpt, real_lattice, mp_grid, num_wann, error, comm, &
+                                         OO=SAA(:, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha))
+      call pw90common_fourier_R_to_k_new(ws_region, wannier_data, ws_distance, wigner_seitz, &
+                                         SBB_R(:, :, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha), &
+                                         kpt, real_lattice, mp_grid, num_wann, error, comm, &
+                                         OO=SBB(:, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha))
+    else
+      call pw90common_fourier_R_to_k_new(ws_region, wannier_data, ws_distance, wigner_seitz, &
+                                         SR_R(:, :, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha), &
+                                         kpt, real_lattice, mp_grid, num_wann, error, comm, &
+                                         OO=SAA(:, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha))
+      call pw90common_fourier_R_to_k_new(ws_region, wannier_data, ws_distance, wigner_seitz, &
+                                         SHR_R(:, :, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha), &
+                                         kpt, real_lattice, mp_grid, num_wann, error, comm, &
+                                         OO=SBB(:, :, pw90_spin_hall%gamma, pw90_spin_hall%alpha))
+    end if
+
+    do i = 1, 3
+      AA(:, :, i) = utility_rotate(AA(:, :, i), UU, num_wann)
+      SS(:, :, i) = utility_rotate(SS(:, :, i), UU, num_wann)
+      VV0(:, :, i) = utility_rotate(delHH(:, :, i), UU, num_wann)
+      do j = 1, 3
+        SAA(:, :, i, j) = utility_rotate(SAA(:, :, i, j), UU, num_wann)
+        SBB(:, :, i, j) = utility_rotate(SBB(:, :, i, j), UU, num_wann)
+      end do
+    end do
+
+    !velocity
+    do m = 1, num_wann
+      do n = 1, num_wann
+        VV(n, m, pw90_spin_hall%beta) = VV0(n, m, pw90_spin_hall%beta) &
+                                        - cmplx_i*AA(n, m, pw90_spin_hall%beta)*(eig(m) - eig(n))
+      end do
+    end do
+
+    !spin velocity
+    spinVel0 = 0.D0
+    spinVel = 0.D0
+
+    i = pw90_spin_hall%alpha
+    j = pw90_spin_hall%gamma
+    spinVel0(:, :, j, i) = matmul(VV0(:, :, i), SS(:, :, j)) + &
+                           matmul(SS(:, :, j), VV0(:, :, i))
+    do m = 1, num_wann
+      do n = 1, num_wann
+        spinVel(n, m, j, i) = spinVel0(n, m, j, i) &
+                              - cmplx_i*(eig(m)*SAA(n, m, j, i) - SBB(n, m, j, i))
+        spinVel(n, m, j, i) = spinVel(n, m, j, i) &
+                              + cmplx_i*(eig(n)*conjg(SAA(m, n, j, i)) - conjg(SBB(m, n, j, i)))
+      end do
+    end do
+
+    spinVel = spinVel/2.0_dp
+
+    !output
+    do n = 1, num_wann
+      do m = 1, num_wann
+        imjv(n, m) = aimag(spinVel(n, m, j, i)*VV(m, n, pw90_spin_hall%beta))
+      end do
+    end do
+    eig_out = eig
+
+    deallocate (HH)
+    deallocate (delHH)
+    deallocate (UU)
+    deallocate (VV)
+    deallocate (VV0)
+    deallocate (AA)
+    deallocate (SS)
+    deallocate (spinVel0)
+    deallocate (spinVel)
+    deallocate (SAA)
+    deallocate (SBB)
+
+  end subroutine berry_get_shc_tetrahedron
 
   !================================================!
   subroutine berry_print_progress(end_k, loop_k, start_k, step_k, stdout)
@@ -2951,14 +3356,14 @@ contains
 
     use w90_constants, only: dp, cmplx_0, cmplx_i
     use w90_wan_ham, only: wham_get_D_h, wham_get_eig_UU_HH_AA_sc, wham_get_eig_deleig, &
-      wham_get_D_h_P_value
+                           wham_get_D_h_P_value
     use w90_utility, only: utility_rotate
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, kmesh_info_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_postw90_types, only: pw90_berry_mod_type, pw90_spin_mod_type, &
-      pw90_spin_hall_type, pw90_band_deriv_degen_type, pw90_oper_read_type, wigner_seitz_type, &
-      kpoint_dist_type
-    use w90_comms, only: w90comm_type
+                                 pw90_spin_hall_type, pw90_band_deriv_degen_type, pw90_oper_read_type, wigner_seitz_type, &
+                                 kpoint_dist_type
+    use w90_comms, only: w90_comm_type
 
     implicit none
 
@@ -2972,7 +3377,7 @@ contains
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
     type(timer_list_type), intent(inout) :: timer
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
     complex(kind=dp), intent(out), dimension(:, :, :, :, :)     :: kdotp
@@ -3051,8 +3456,8 @@ contains
       do b = 1, 3
         ! second derivative of Hamiltonian d^{2}H_dadb
         HH_dadb_bar(:, :, a, b) = utility_rotate(HH_dadb(:, :, a, b), UU, num_wann)
-      enddo
-    enddo
+      end do
+    end do
 
     kdotp_num_bands = size(pw90_berry%kdotp_bands)
     ! loop on initial and final bands in k.p set (subset A in IAdJS19)
@@ -3092,8 +3497,8 @@ contains
           end do
         end do
 
-      enddo ! bands
-    enddo ! bands
+      end do ! bands
+    end do ! bands
 
   end subroutine berry_get_kdotp
 

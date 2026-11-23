@@ -1,0 +1,67 @@
+specfile_path: .distro/wannier90.spec
+files_to_sync:
+  - src: .distro/
+    dest: ./
+    delete: true
+    filters:
+      - "protect .git*"
+      - "protect sources"
+      - "protect changelog"
+      - "protect gating.yaml"
+  - .packit.yaml
+
+upstream_package_name: wannier90
+downstream_package_name: wannier90
+upstream_tag_template: v{version}
+version_suffix: "^{PACKIT_PROJECT_SNAPSHOTID}"
+update_release: false
+
+targets:
+  - fedora-all-x86_64
+  - fedora-all-aarch64
+
+_:
+  # Job templates
+  - &build-in-packit
+    job: copr_build
+  - &build-in-fedora-science
+    <<: *build-in-packit
+    owner: "@fedora-science"
+  - &tests-downstream
+    job: tests
+    fmf_path: .distro
+    identifier: downstream
+
+jobs:
+  ## Upstream jobs
+  # Build and test inside PRs
+  - <<: *build-in-packit
+    trigger: pull_request
+  - <<: *tests-downstream
+    trigger: pull_request
+  # Build and test each commit
+  - <<: *build-in-fedora-science
+    trigger: commit
+    branch: develop
+    project: latest
+  - <<: *tests-downstream
+    trigger: commit
+    branch: develop
+  # Just build on release
+  - <<: *build-in-fedora-science
+    trigger: release
+    project: release
+    version_suffix: null
+  ## Downstream jobs
+  - job: propose_downstream
+    trigger: release
+    dist_git_branches:
+      - fedora-development
+  - job: koji_build
+    trigger: commit
+    dist_git_branches:
+      - fedora-all
+  - job: bodhi_update
+    trigger: commit
+    dist_git_branches:
+      - fedora-branched

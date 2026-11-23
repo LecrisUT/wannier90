@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_geninterp: interpolation functions                    !
@@ -25,7 +38,7 @@ module w90_geninterp
   !! June, 2012
 
   use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_fatal, &
-    set_error_input, set_error_fatal, set_error_file
+                       set_error_input, set_error_fatal, set_error_file
 
   implicit none
 
@@ -87,16 +100,16 @@ contains
 
     use w90_constants, only: dp, pi
     use w90_postw90_types, only: pw90_geninterp_mod_type, &
-      pw90_band_deriv_degen_type, wigner_seitz_type
+                                 pw90_band_deriv_degen_type, wigner_seitz_type
     use w90_types, only: dis_manifold_type, print_output_type, &
-      wannier_data_type, ws_region_type, ws_distance_type, timer_list_type
-    use w90_io, only: io_file_unit, io_stopwatch_start, io_stopwatch_stop
+                         wannier_data_type, ws_region_type, ws_distance_type, timer_list_type
+    use w90_io, only: io_stopwatch_start, io_stopwatch_stop
     use w90_postw90_common, only: pw90common_fourier_R_to_k
     use w90_utility, only: utility_diagonalize, utility_recip_lattice_base
     use w90_wan_ham, only: wham_get_eig_deleig
     use w90_get_oper, only: get_HH_R
     use w90_comms, only: mpirank, mpisize, comms_bcast, comms_array_split, comms_scatterv, &
-      comms_gatherv, w90comm_type
+                         comms_gatherv, w90_comm_type
 
     ! arguments
     type(dis_manifold_type), intent(in)          :: dis_manifold
@@ -108,7 +121,7 @@ contains
     type(ws_distance_type), intent(inout)        :: ws_distance
     type(wigner_seitz_type), intent(inout)       :: wigner_seitz
     type(timer_list_type), intent(inout)         :: timer
-    type(w90comm_type), intent(in)               :: comm
+    type(w90_comm_type), intent(in)               :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
     complex(kind=dp), allocatable, intent(inout) :: HH_R(:, :, :)
@@ -163,8 +176,7 @@ contains
       write (stdout, '(1x,a)') '|                      Generic Band Interpolation routines                  |'
       write (stdout, '(1x,a)') '*---------------------------------------------------------------------------*'
 
-      kpt_unit = io_file_unit()
-      open (unit=kpt_unit, file=trim(seedname)//'_geninterp.kpt', form='formatted', status='old', &
+      open (newunit=kpt_unit, file=trim(seedname)//'_geninterp.kpt', form='formatted', status='old', &
             err=105)
 
       ! First line: comment (e.g. creation date, author, ...)
@@ -196,25 +208,25 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating HH in calcTDF', comm)
       return
-    endif
+    end if
     allocate (UU(num_wann, num_wann), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating UU in calcTDF', comm)
       return
-    endif
+    end if
     if (pw90_geninterp%alsofirstder) then
       allocate (delHH(num_wann, num_wann, 3), stat=ierr)
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error in allocating delHH in calcTDF', comm)
         return
-      endif
+      end if
     end if
 
     ! I call once the routine to calculate the Hamiltonian in real-space <0n|H|Rm>
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  num_valence_bands, effective_model, have_disentangled, seedname, stdout, timer, &
-                  error, comm)
+                  num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                  stdout, timer, error, comm)
     if (allocated(error)) return
 
     if (on_root) then
@@ -222,23 +234,23 @@ contains
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error allocating kpointidx in geinterp_main.', comm)
         return
-      endif
+      end if
       allocate (kpoints(3, nkinterp), stat=ierr)
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error allocating kpoints in geinterp_main.', comm)
         return
-      endif
+      end if
       if (pw90_geninterp%single_file) then
         allocate (globaleig(num_wann, nkinterp), stat=ierr)
         if (ierr /= 0) then
           call set_error_alloc(error, 'Error allocating globaleig in geinterp_main.', comm)
           return
-        endif
+        end if
         allocate (globaldeleig(num_wann, 3, nkinterp), stat=ierr)
         if (ierr /= 0) then
           call set_error_alloc(error, 'Error allocating globaldeleig in geinterp_main.', comm)
           return
-        endif
+        end if
       end if
     else
       ! On the other nodes, I still allocate them with size 1 to avoid
@@ -247,23 +259,23 @@ contains
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error allocating kpointidx in geinterp_main.', comm)
         return
-      endif
+      end if
       allocate (kpoints(1, 1), stat=ierr)
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error allocating kpoints in geinterp_main.', comm)
         return
-      endif
+      end if
       if (pw90_geninterp%single_file) then
         allocate (globaleig(num_wann, 1), stat=ierr)
         if (ierr /= 0) then
           call set_error_alloc(error, 'Error allocating globaleig in geinterp_main.', comm)
           return
-        endif
+        end if
         allocate (globaldeleig(num_wann, 3, 1), stat=ierr)
         if (ierr /= 0) then
           call set_error_alloc(error, 'Error allocating globaldeleig in geinterp_main.', comm)
           return
-        endif
+        end if
       end if
     end if
 
@@ -274,17 +286,17 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error allocating localkpoints in geinterp_main.', comm)
       return
-    endif
+    end if
     allocate (localeig(num_wann, max(1, counts(my_node_id))), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error allocating localeig in geinterp_main.', comm)
       return
-    endif
+    end if
     allocate (localdeleig(num_wann, 3, max(1, counts(my_node_id))), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error allocating localdeleig in geinterp_main.', comm)
       return
-    endif
+    end if
 
     ! On root, I read numpoints_thischunk points
     if (on_root) then
@@ -317,7 +329,7 @@ contains
       if (ierr /= 0) then
         call set_error_alloc(error, 'Error allocating localkpointidx in geinterp_main.', comm)
         return
-      endif
+      end if
       call comms_scatterv(localkpointidx, counts(my_node_id), kpointidx, counts, displs, error, comm)
       if (allocated(error)) return
     end if
@@ -326,8 +338,7 @@ contains
     if (pw90_geninterp%single_file) then
       if (on_root) then
         outdat_filename = trim(seedname)//'_geninterp.dat'
-        outdat_unit = io_file_unit()
-        open (unit=outdat_unit, file=trim(outdat_filename), form='formatted', err=107)
+        open (newunit=outdat_unit, file=trim(outdat_filename), form='formatted', err=107)
 
         call internal_write_header(outdat_unit, commentline, pw90_geninterp)
       end if
@@ -336,9 +347,8 @@ contains
         write (outdat_filename, '(a,a,I0,a)') trim(seedname), '_geninterp_', my_node_id, '.dat'
       else
         write (outdat_filename, '(a,a,I5.5,a)') trim(seedname), '_geninterp_', my_node_id, '.dat'
-      endif
-      outdat_unit = io_file_unit()
-      open (unit=outdat_unit, file=trim(outdat_filename), form='formatted', err=107)
+      end if
+      open (newunit=outdat_unit, file=trim(outdat_filename), form='formatted', err=107)
 
       call comms_bcast(commentline, len(commentline), error, comm)
       if (allocated(error)) return
@@ -463,7 +473,7 @@ contains
 106 call set_error_file(error, 'Error: Problem reading k-point file '//trim(seedname)//'_geninterp.kpt', comm)
     return
 107 call set_error_file(error, 'Error: Problem opening output file '//trim(outdat_filename), comm)
-    return !fixme JJ restructure these away
+    return
 
   end subroutine geninterp_main
 

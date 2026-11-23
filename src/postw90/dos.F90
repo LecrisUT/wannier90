@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_dos: compute density of states                        !
@@ -22,7 +35,7 @@ module w90_dos
 
   use w90_constants, only: dp
   use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_fatal, &
-    set_error_input, set_error_fatal, set_error_file
+                       set_error_input, set_error_fatal, set_error_file
 
   implicit none
 
@@ -53,15 +66,15 @@ contains
     !
     !================================================!
 
-    use w90_comms, only: comms_reduce, w90comm_type, mpirank, mpisize
+    use w90_comms, only: comms_reduce, w90_comm_type, mpirank, mpisize
     use w90_postw90_common, only: pw90common_fourier_R_to_k
     use w90_postw90_types, only: pw90_dos_mod_type, pw90_berry_mod_type, &
-      pw90_band_deriv_degen_type, pw90_spin_mod_type, pw90_oper_read_type, wigner_seitz_type, &
-      kpoint_dist_type
+                                 pw90_band_deriv_degen_type, pw90_spin_mod_type, pw90_oper_read_type, wigner_seitz_type, &
+                                 kpoint_dist_type
     use w90_types, only: print_output_type, wannier_data_type, dis_manifold_type, &
-      ws_region_type, w90_system_type, ws_distance_type, timer_list_type
+                         ws_region_type, w90_system_type, ws_distance_type, timer_list_type
     use w90_get_oper, only: get_HH_R, get_SS_R
-    use w90_io, only: io_file_unit, io_date, io_stopwatch_start, io_stopwatch_stop
+    use w90_io, only: io_date, io_stopwatch_start, io_stopwatch_stop
     use w90_utility, only: utility_diagonalize, utility_recip_lattice_base
     use w90_wan_ham, only: wham_get_eig_deleig
 
@@ -82,7 +95,7 @@ contains
     type(ws_distance_type), intent(inout)        :: ws_distance
     type(wigner_seitz_type), intent(inout)       :: wigner_seitz
     type(timer_list_type), intent(inout)         :: timer
-    type(w90comm_type), intent(in)               :: comm
+    type(w90_comm_type), intent(in)               :: comm
     type(w90_error_type), allocatable, intent(out) :: error
 
     complex(kind=dp), allocatable, intent(inout) :: HH_R(:, :, :)
@@ -138,7 +151,7 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating dos_energyarray in dos subroutine', comm)
       return
-    endif
+    end if
 
     do ifreq = 1, num_freq
       dos_energyarray(ifreq) = pw90_dos%energy_min + real(ifreq - 1, dp)*d_omega
@@ -148,21 +161,21 @@ contains
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating HH in dos', comm)
       return
-    endif
+    end if
     allocate (delHH(num_wann, num_wann, 3), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating delHH in dos', comm)
       return
-    endif
+    end if
     allocate (UU(num_wann, num_wann), stat=ierr)
     if (ierr /= 0) then
       call set_error_alloc(error, 'Error in allocating UU in dos', comm)
       return
-    endif
+    end if
 
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  w90_system%num_valence_bands, effective_model, have_disentangled, seedname, &
+                  w90_system%num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
                   stdout, timer, error, comm)
 
     if (allocated(error)) return
@@ -170,7 +183,7 @@ contains
     if (spin_decomp) then
       ndim = 3
       call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, eigval, &
-                    wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                    wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                     have_disentangled, seedname, stdout, timer, error, comm)
 
       if (allocated(error)) return
@@ -203,8 +216,8 @@ contains
         write (stdout, '(3x,a)') 'Selected WFs |Rn> are:'
         do i = 1, pw90_dos%num_project
           write (stdout, '(5x,a,2x,i3)') 'n =', pw90_dos%project(i)
-        enddo
-      endif
+        end do
+      end if
 
       write (stdout, '(/,5x,a,f9.4,a,f9.4,a)') &
         'Energy range: [', pw90_dos%energy_min, ',', pw90_dos%energy_max, '] eV'
@@ -326,13 +339,12 @@ contains
     if (print_output%iprint > 0) then
       write (stdout, '(1x,a)') 'Output data files:'
       write (stdout, '(/,3x,a)') trim(seedname)//'-dos.dat'
-      dos_unit = io_file_unit()
-      open (dos_unit, FILE=trim(seedname)//'-dos.dat', STATUS='UNKNOWN', &
+      open (newunit=dos_unit, FILE=trim(seedname)//'-dos.dat', STATUS='UNKNOWN', &
             FORM='FORMATTED')
       do ifreq = 1, num_freq
         omega = dos_energyarray(ifreq)
         write (dos_unit, '(4E16.8)') omega, dos_all(ifreq, :)
-      enddo
+      end do
       close (dos_unit)
       if (print_output%timing_level > 1) call io_stopwatch_stop('dos', timer)
     end if
@@ -341,17 +353,17 @@ contains
     if (ierr /= 0) then
       call set_error_dealloc(error, 'Error in deallocating HH in dos_main', comm)
       return
-    endif
+    end if
     deallocate (delHH, stat=ierr)
     if (ierr /= 0) then
       call set_error_dealloc(error, 'Error in deallocating delHH in dos_main', comm)
       return
-    endif
+    end if
     deallocate (UU, stat=ierr)
     if (ierr /= 0) then
       call set_error_dealloc(error, 'Error in deallocating UU in dos_main', comm)
       return
-    endif
+    end if
 
   end subroutine dos_main
 
@@ -379,7 +391,7 @@ contains
 !~         dos_max_energy,dos_energy_step,&
 !~         wanint_kpoint_file
 !~
-!~#ifdef MPI
+!~#ifdef W90_MPI
 !~    include 'mpif.h'
 !~#endif
 !~
@@ -411,7 +423,7 @@ contains
 !~          ikp=ikp+1
 !~       end do
 !~       num_int_kpts_on_node(my_node_id)=ikp
-!~#ifdef MPI
+!~#ifdef W90_MPI
 !~       call MPI_reduce(ikp,max_int_kpts_on_node,1,MPI_integer,&
 !~            MPI_MAX,0,MPI_COMM_WORLD,ierr)
 !~#else
@@ -482,7 +494,7 @@ contains
 !~    !
 !~    sum_max_node=count_states(emax,eig_node,levelspacing_node,&
 !~         num_int_kpts_on_node(my_node_id))
-!~#ifdef MPI
+!~#ifdef W90_MPI
 !~    call MPI_reduce(sum_max_node,sum_max_all,1,MPI_DOUBLE_PRECISION,&
 !~         MPI_SUM,0,MPI_COMM_WORLD,ierr)
 !~#else
@@ -505,7 +517,7 @@ contains
 !~       emid=(emin+emax)/2.0_dp
 !~       sum_mid_node=count_states(emid,eig_node,levelspacing_node,&
 !~            num_int_kpts_on_node(my_node_id))
-!~#ifdef MPI
+!~#ifdef W90_MPI
 !~       call MPI_reduce(sum_mid_node,sum_mid_all,1,MPI_DOUBLE_PRECISION,&
 !~            MPI_SUM,0,MPI_COMM_WORLD,ierr)
 !~#else
@@ -593,11 +605,11 @@ contains
     use w90_constants, only: dp, smearing_cutoff, min_smearing_binwidth_ratio
     use w90_utility, only: utility_w0gauss
     use w90_postw90_types, only: pw90_spin_mod_type, pw90_dos_mod_type, pw90_smearing_type, &
-      wigner_seitz_type
+                                 wigner_seitz_type
     use w90_types, only: wannier_data_type, ws_region_type, ws_distance_type
     use w90_spin, only: spin_get_nk
     use w90_utility, only: utility_w0gauss
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     ! Arguments
     type(pw90_dos_mod_type), intent(in) :: pw90_dos
@@ -608,7 +620,7 @@ contains
     type(ws_distance_type), intent(inout) :: ws_distance
     type(pw90_smearing_type), intent(in) :: smearing
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(in) :: mp_grid(3)
     integer, intent(in) :: num_elec_per_state
@@ -643,13 +655,13 @@ contains
         call set_error_input(error, 'Cannot call doskpt with levelspacing_k and ' &
                              //'without adptative smearing', comm)
         return
-      endif
+      end if
     else
       if (smearing%use_adaptive) then
         call set_error_input(error, 'Cannot call doskpt without levelspacing_k and ' &
                              //'with adptative smearing', comm)
         return
-      endif
+      end if
     end if
 
     r_num_elec_per_state = real(num_elec_per_state, kind=dp)
@@ -661,7 +673,7 @@ contains
                        kpt, real_lattice, spn_nk, mp_grid, num_wann, error, comm)
       if (allocated(error)) return
 
-    endif
+    end if
 
     binwidth = EnergyArray(2) - EnergyArray(1)
 
@@ -745,9 +757,9 @@ contains
               dos_k(loop_f, 3) = dos_k(loop_f, 3) &
                                  + rdum*beta_sq*abs(UU(pw90_dos%project(j), i))**2
             end if
-          enddo
-        endif
-      enddo !loop_f
+          end do
+        end if
+      end do !loop_f
     end do !loop over bands
 
   end subroutine dos_get_k

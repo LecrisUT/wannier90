@@ -1,0 +1,12 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=@pkgconf_libdir@
+includedir=@pkgconf_includedir@
+moduledir=@pkgconf_moduledir@/Wannier90
+
+Name: wannier90
+Version: @PROJECT_VERSION@
+Description: @PROJECT_DESCRIPTION@
+URL: @PROJECT_HOMEPAGE_URL@
+
+Cflags: -I${moduledir} -I${includedir}
+Libs: -L${libdir} -l@WANNIER90_LIBRARY_NAME@

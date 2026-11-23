@@ -1,15 +1,28 @@
 !-*- mode: F90 -*-!
 !------------------------------------------------------------!
-! This file is distributed as part of the Wannier90 code and !
-! under the terms of the GNU General Public License. See the !
-! file `LICENSE' in the root directory of the Wannier90      !
-! distribution, or http://www.gnu.org/copyleft/gpl.txt       !
+! Copyright (C) 2026 Wannier Developer Group                 !
 !                                                            !
-! The webpage of the Wannier90 code is www.wannier.org       !
+! This library is free software; you can redistribute it     !
+! and/or modify it under the terms of the GNU Lesser General !
+! Public License as published by the Free Software           !
+! Foundation; either version 2.1 of the License, or (at your !
+! option) any later version.                                 !
 !                                                            !
-! The Wannier90 code is hosted on GitHub:                    !
+! This library is distributed in the hope that it will be    !
+! useful,but WITHOUT ANY WARRANTY; without even the implied  !
+! warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR    !
+! PURPOSE.  See the GNU Lesser General Public License for    !
+! more details.                                              !
 !                                                            !
-! https://github.com/wannier-developers/wannier90            !
+! You should have received a copy of the GNU Lesser General  !
+! Public License along with this library; if not, see        !
+! <https://www.gnu.org/licenses/>.                           !
+!                                                            !
+! The webpage of the Wannier90 code is                       !
+! <https://www.wannier.org>.                                 !
+!                                                            !
+! The Wannier90 code is hosted on GitHub                     !
+! <https://github.com/wannier-developers/wannier90>          !
 !------------------------------------------------------------!
 !                                                            !
 !  w90_spin: spin operations                                 !
@@ -22,7 +35,7 @@ module w90_spin
 
   use w90_constants, only: dp
   use w90_error, only: w90_error_type, set_error_alloc, set_error_dealloc, set_error_fatal, &
-    set_error_input, set_error_fatal, set_error_file
+                       set_error_input, set_error_fatal, set_error_file
 
   implicit none
 
@@ -51,11 +64,11 @@ contains
     !================================================!
 
     use w90_constants, only: dp, pi
-    use w90_comms, only: comms_reduce, w90comm_type, mpirank, mpisize
+    use w90_comms, only: comms_reduce, w90_comm_type, mpirank, mpisize
     use w90_postw90_types, only: pw90_spin_mod_type, pw90_oper_read_type, wigner_seitz_type, &
-      kpoint_dist_type
+                                 kpoint_dist_type
     use w90_types, only: print_output_type, wannier_data_type, &
-      dis_manifold_type, ws_region_type, ws_distance_type, timer_list_type
+                         dis_manifold_type, ws_region_type, ws_distance_type, timer_list_type
     use w90_get_oper, only: get_HH_R, get_SS_R
 
     implicit none
@@ -67,7 +80,7 @@ contains
     type(pw90_spin_mod_type), intent(in) :: pw90_spin
     type(print_output_type), intent(in) :: print_output
     type(ws_region_type), intent(in) :: ws_region
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
     type(wannier_data_type), intent(in) :: wannier_data
     type(wigner_seitz_type), intent(inout) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
@@ -109,16 +122,16 @@ contains
     if (fermi_n > 1) then
       call set_error_input(error, 'Routine spin_get_moment requires nfermi=1', comm)
       return
-    endif
+    end if
 
     call get_HH_R(dis_manifold, kpt_latt, print_output, wigner_seitz, HH_R, u_matrix, v_matrix, &
                   eigval, real_lattice, scissors_shift, num_bands, num_kpts, num_wann, &
-                  num_valence_bands, effective_model, have_disentangled, seedname, stdout, timer, &
-                  error, comm)
+                  num_valence_bands, effective_model, have_disentangled, seedname, ws_distance, ws_region, &
+                  stdout, timer, error, comm)
     if (allocated(error)) return
 
     call get_SS_R(dis_manifold, kpt_latt, print_output, pw90_oper_read, SS_R, v_matrix, eigval, &
-                  wigner_seitz%irvec, wigner_seitz%nrpts, num_bands, num_kpts, num_wann, &
+                  wigner_seitz, ws_distance, ws_region, num_bands, num_kpts, num_wann, &
                   have_disentangled, seedname, stdout, timer, error, comm)
     if (allocated(error)) return
 
@@ -222,10 +235,10 @@ contains
     use w90_constants, only: dp, pi
     use w90_utility, only: utility_diagonalize, utility_rotate_diag
     use w90_types, only: print_output_type, wannier_data_type, ws_region_type, &
-      ws_distance_type
+                         ws_distance_type
     use w90_postw90_types, only: pw90_spin_mod_type, wigner_seitz_type
     use w90_postw90_common, only: pw90common_fourier_R_to_k
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
     type(pw90_spin_mod_type), intent(in) :: pw90_spin
@@ -234,7 +247,7 @@ contains
     type(wigner_seitz_type), intent(in) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(in) :: num_wann
     integer, intent(in) :: mp_grid(3)
@@ -274,7 +287,7 @@ contains
                                      SS(:, :, is), SS_R(:, :, :, is), kpt, real_lattice, mp_grid, &
                                      0, num_wann, error, comm)
       if (allocated(error)) return
-    enddo
+    end do
 
     ! Unit vector along the magnetization direction
 
@@ -305,10 +318,10 @@ contains
     use w90_constants, only: dp, cmplx_i
     use w90_utility, only: utility_diagonalize, utility_rotate_diag
     use w90_types, only: print_output_type, wannier_data_type, ws_region_type, &
-      ws_distance_type
+                         ws_distance_type
     use w90_postw90_common, only: pw90common_fourier_R_to_k, pw90common_get_occ
     use w90_postw90_types, only: wigner_seitz_type
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
     type(ws_region_type), intent(in) :: ws_region
@@ -316,7 +329,7 @@ contains
     type(wigner_seitz_type), intent(in) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(in) :: mp_grid(3)
     integer, intent(in) :: num_wann
@@ -366,7 +379,7 @@ contains
       do i = 1, num_wann
         spn_k(is) = spn_k(is) + occ(i)*spn_nk(i, is)
       end do
-    enddo
+    end do
 
   end subroutine spin_get_moment_k
 
@@ -383,10 +396,10 @@ contains
     use w90_constants, only: dp
     use w90_utility, only: utility_diagonalize, utility_rotate_diag
     use w90_types, only: print_output_type, wannier_data_type, ws_region_type, &
-      ws_distance_type
+                         ws_distance_type
     use w90_postw90_common, only: pw90common_fourier_R_to_k
     use w90_postw90_types, only: wigner_seitz_type
-    use w90_comms, only: w90comm_type
+    use w90_comms, only: w90_comm_type
 
     ! arguments
     type(ws_region_type), intent(in) :: ws_region
@@ -394,7 +407,7 @@ contains
     type(wigner_seitz_type), intent(in) :: wigner_seitz
     type(ws_distance_type), intent(inout) :: ws_distance
     type(w90_error_type), allocatable, intent(out) :: error
-    type(w90comm_type), intent(in) :: comm
+    type(w90_comm_type), intent(in) :: comm
 
     integer, intent(in) :: mp_grid(3)
     integer, intent(in) :: num_wann
@@ -434,7 +447,7 @@ contains
       if (allocated(error)) return
 
       S(:, i) = real(utility_rotate_diag(SS(:, :, i), UU, num_wann), dp)
-    enddo
+    end do
 
   end subroutine spin_get_S
 
